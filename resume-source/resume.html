@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Booki Choi - Resume</title>
+<style>
+@page {
+    size: Letter;
+    margin: 0.45in 0.65in;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: "Helvetica Neue", Arial, "Segoe UI", sans-serif;
+    color: #1a1a1a;
+    font-size: 10.3pt;
+    line-height: 1.48;
+    -webkit-font-smoothing: antialiased;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 10pt;
+}
+
+.header h1 {
+    font-size: 22pt;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 3pt;
+}
+
+.header .tagline {
+    font-size: 10.5pt;
+    color: #2563EB;
+    font-weight: 600;
+    margin-bottom: 5pt;
+}
+
+.header .contact {
+    font-size: 9pt;
+    color: #444;
+}
+
+.header .contact a {
+    color: #444;
+    text-decoration: none;
+}
+
+.header .contact span.sep {
+    color: #bbb;
+    margin: 0 5pt;
+}
+
+.contact-line {
+    margin-bottom: 2pt;
+}
+
+.contact-line:last-child {
+    margin-bottom: 0;
+}
+
+.summary {
+    font-size: 9.8pt;
+    color: #333;
+    text-align: left;
+    margin-bottom: 10pt;
+    line-height: 1.5;
+}
+
+section {
+    margin-bottom: 7pt;
+}
+
+section:last-child {
+    margin-bottom: 0;
+}
+
+h2 {
+    font-size: 9.5pt;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #2563EB;
+    border-bottom: 1.2pt solid #ddd;
+    padding-bottom: 2pt;
+    margin-bottom: 6pt;
+}
+
+.entry {
+    margin-bottom: 7pt;
+}
+
+.entry:last-child {
+    margin-bottom: 0;
+}
+
+.entry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 1pt 10pt;
+    margin-bottom: 1pt;
+}
+
+.entry-title {
+    font-size: 10.2pt;
+    font-weight: 700;
+    flex: 1 1 auto;
+}
+
+.entry-subtitle {
+    font-size: 9.5pt;
+    font-weight: 500;
+    color: #555;
+}
+
+.entry-date {
+    font-size: 8.8pt;
+    color: #666;
+    white-space: nowrap;
+    font-weight: 500;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+.entry-meta {
+    font-size: 8.8pt;
+    color: #777;
+    margin-bottom: 2.5pt;
+}
+
+.entry-meta a {
+    color: #2563EB;
+    text-decoration: none;
+}
+
+ul.bullets {
+    list-style: none;
+    padding-left: 0;
+}
+
+ul.bullets li {
+    position: relative;
+    padding-left: 11pt;
+    margin-bottom: 2pt;
+    font-size: 9.4pt;
+    color: #2a2a2a;
+    line-height: 1.42;
+}
+
+ul.bullets li::before {
+    content: '–';
+    position: absolute;
+    left: 0;
+    color: #999;
+}
+
+.skills-grid {
+    display: grid;
+    grid-template-columns: 130pt 1fr;
+    row-gap: 5pt;
+    column-gap: 8pt;
+}
+
+.skills-grid .skill-label {
+    font-size: 9.3pt;
+    font-weight: 700;
+    color: #333;
+}
+
+.skills-grid .skill-value {
+    font-size: 9.3pt;
+    color: #333;
+}
+
+.edu-entry {
+    margin-bottom: 3pt;
+}
+
+.edu-entry:last-child {
+    margin-bottom: 0;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Booki Choi</h1>
+    <div class="tagline">Aspiring Business Analyst &middot; Frontend Engineering &amp; Data Analytics Background</div>
+    <div class="contact">
+        <div class="contact-line">Burnaby, BC, Canada</div>
+        <div class="contact-line">
+            <a href="mailto:bookichoi98@gmail.com">bookichoi98@gmail.com</a>
+            <span class="sep">|</span>
+            <a href="https://linkedin.com/in/bookichoi">linkedin.com/in/bookichoi</a>
+            <span class="sep">|</span>
+            <a href="https://github.com/BookiChoi">github.com/BookiChoi</a>
+            <span class="sep">|</span>
+            <a href="https://bookichoi.github.io">bookichoi.github.io</a>
+        </div>
+    </div>
+</div>
+
+<p class="summary">
+Frontend Engineer with 3.5 years of experience shipping production web products at a B2B2C startup, now transitioning into Business Analysis through a Data Analytics diploma in Vancouver. Combines a hands-on engineering background with growing data and business analysis skills to bridge technical execution and product decision-making.
+</p>
+
+<section>
+    <h2>Experience</h2>
+    <div class="entry">
+        <div class="entry-header">
+            <span class="entry-title">Onmydev</span>
+            <span class="entry-date">Jul 2022 – Dec 2025</span>
+        </div>
+        <div class="entry-meta">Frontend Engineer &middot; Seongnam, South Korea</div>
+        <ul class="bullets">
+            <li>Joined as an early engineer and independently built ~90% of the merchant admin dashboard (product, review, comment, and loyalty-point management); proposed and led the adoption of TanStack Query to replace manual-refresh-dependent state with optimistic updates, earning direct customer feedback that the tool had become "much easier to use."</li>
+            <li>Built a Chrome-extension-based tool to import Instagram reviews that the backend couldn't access directly; adopted 120+ times/week with zero support tickets and positive customer feedback.</li>
+            <li>Diagnosed a rendering bottleneck in the review widget and rebuilt it with a custom slider and windowing technique, improving render performance by ~60% (initial load time 2s → 0.8s) and eliminating all speed-related customer complaints.</li>
+            <li>Built an IndexedDB caching layer to eliminate redundant API calls across multiple widgets loaded on the same page, improving average widget load time by ~70%.</li>
+        </ul>
+    </div>
+</section>
+
+<section>
+    <h2>Personal Projects</h2>
+    <div class="entry">
+        <div class="entry-header">
+            <span class="entry-title">Talearnt</span>
+            <span class="entry-date">Archived</span>
+        </div>
+        <div class="entry-meta">Solo Frontend Developer &middot; <a href="https://github.com/Talearnt/Front-Talearnt">github.com/Talearnt/Front-Talearnt</a></div>
+        <ul class="bullets">
+            <li>Designed and built a talent-exchange platform end-to-end as the sole frontend engineer on a small team — Feature-Sliced architecture, memory access token + HttpOnly refresh cookie authentication, GitHub Actions CI/CD, and bundle-splitting optimization.</li>
+        </ul>
+    </div>
+    <div class="entry">
+        <div class="entry-header">
+            <span class="entry-title">BA Learning Portfolio</span>
+            <span class="entry-date">In Progress</span>
+        </div>
+        <div class="entry-meta"><a href="https://github.com/BookiChoi/BA-Portfolio">github.com/BookiChoi/BA-Portfolio</a></div>
+        <ul class="bullets">
+            <li>Ongoing self-directed portfolio building foundations in SQL, Python, EDA, Tableau, and business case analysis through a "Learn → Practice → Build" approach.</li>
+        </ul>
+    </div>
+</section>
+
+<section>
+    <h2>Education</h2>
+    <div class="edu-entry">
+        <div class="entry-header">
+            <span class="entry-title">Cornerstone International Community College of Canada (CICCC)</span>
+            <span class="entry-date">Jan 2026 – Present</span>
+        </div>
+        <div class="entry-meta">Data Science Diploma (In Progress) &middot; Vancouver, BC</div>
+    </div>
+    <div class="edu-entry">
+        <div class="entry-header">
+            <span class="entry-title">Suwon University</span>
+            <span class="entry-date">2017 – Feb 2023</span>
+        </div>
+        <div class="entry-meta">B.S. in Information Security &middot; South Korea</div>
+    </div>
+</section>
+
+<section>
+    <h2>Skills</h2>
+    <div class="skills-grid">
+        <span class="skill-label">Data &amp; Business Analysis</span>
+        <span class="skill-value">SQL, Python (Pandas, NumPy), Tableau, Statistics, EDA &amp; Data Cleaning, Hypothesis-Driven Analysis, Business Case Analysis</span>
+        <span class="skill-label">Engineering</span>
+        <span class="skill-value">React, TypeScript, JavaScript, SCSS, State Management (TanStack Query, Recoil, Jotai), Jest, Storybook, Performance Optimization</span>
+    </div>
+</section>
+
+</body>
+</html>
