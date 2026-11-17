@@ -8,6 +8,12 @@
   --font-body: 'Geist Variable', 'Pretendard Variable', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
   --prose-max: 860px;
+  --header-h: 3rem;
+  --z-stage: 0;
+  --z-content: 1;
+  --z-header: 5;
+  --stage-glow: rgba(124, 156, 255, 0.14);
+  --stage-vignette: rgba(5, 5, 7, 0.6);
 }
 *, *::before, *::after { box-sizing: border-box; }
 html { background: var(--bg); }

@@ -20,7 +20,7 @@
 - Astro, TypeScript strict, output 'static', site 'https://bookichoi.github.io', base 없음.
 - 다크 단일 테마. 토큰은 src/styles/tokens.css.
 - i18n: /en/, /ko/. 문자열은 src/i18n/*.json.
-- 의존성은 astro, typescript, 폰트 패키지만. three/gsap/lenis는 이번 단계에서 설치하지 않는다.
+- 의존성은 astro, typescript, 폰트 패키지만. three/gsap/lenis 설치 금지는 A단계 한정, B단계부터 three/@types/three 허용.
 
 ## 다음 단계 제약 (기록만, 아직 구현하지 않음)
 - WebGL 캔버스 1개, 렌더러 1개.
@@ -28,3 +28,15 @@
 - 상세 페이지에는 WebGL 없음.
 - prefers-reduced-motion / WebGL 실패 / JS 없음이면 HTML 폴백(#projects 목록).
 - 파티클 tier 128² / 256² / 512²를 자동으로 하향.
+
+## 스테이지 구조 (B단계, 홈 전용)
+- `src/components/Stage.astro`: 고정 레이어 3겹(`.stage-bg` 정적 배경 → `<canvas id="stage">` → `.stage-vignette`). 첫 페인트 뒤 `import('../stage/index')`로 three 청크를 동적 로드.
+- `src/stage/index.ts`: 지원 검사, 렌더러/카메라, rAF 루프, tier 하향, resize/visibility/context lost, 정리.
+- `src/stage/particles.ts`: 튜닝 파라미터 `PARAMS`(한 객체), GPUComputationRenderer(위치/속도), `THREE.Points` 1개.
+- `src/stage/shaders.ts`: GLSL. shape는 `SHAPES` 배열에 추가(인덱스가 shape id). 현재 0=링, 1=구체, `uMorph`로 보간.
+- `src/stage/scroll.ts`: 네이티브 스크롤 → `--p`, `--p-s0..--p-s4`, morph(S0 구간에서 0→1).
+- `src/stage/tiers.ts`: 512/256/128, 모바일 판정, FPS 이동평균, sessionStorage `stage-tier`.
+- `src/stage/debug.ts`: `?debug`일 때만 패널 생성.
+- 상태 클래스(`<html>`): `stage-ready`(첫 프레임 뒤 캔버스 표시), `no-webgl`(캔버스 숨김, 정적 배경).
+- 색은 tokens.css의 `--bg`, `--text`, `--accent`를 읽어 쓴다. 스타일은 `src/styles/stage.css`.
+- 홈 섹션 id: `s0`..`s4`. `#projects` 목록은 `s4` 안에 있다.
