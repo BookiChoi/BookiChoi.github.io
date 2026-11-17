@@ -3,7 +3,8 @@ import { SHAPE_DIMS } from './params';
 // --- 점 분배 비율: 각 shape 안에서 부위별로 점을 몇 %씩 쓰는지. 여기만 고치면 된다 ---
 // 남는 비율은 주된 면으로 간다(building 정면, bars 막대 면, bulb 유리구).
 const RATIOS = /* glsl */ `
-const float BUILDING_SIDE = 0.12; // 옆면. 윤곽선은 uOutline(tier별, PARAMS.outline), 나머지가 정면
+const float BUILDING_SIDE = 0.10; // 옆면. 윤곽선(지붕선, 모서리, 크라운, 안테나, 플라자)은 uOutline(tier별), 나머지가 창문
+const float BUILDING_LOBBY = 0.025; // 타워 1층 로비 입구
 const float BARS_TREND = 0.10;    // 추세선. 막대 윤곽(윗변, 양옆)은 uOutline, 나머지가 막대 면
 const float BULB_FILAMENT = 0.10; // 필라멘트(코일 70%, 지지선 30%). 과노출되면 낮춘다
 const float BULB_NECK = 0.12;     // 목
@@ -17,7 +18,9 @@ const dims = Object.entries(SHAPE_DIMS)
     Object.entries(values).map(([key, v]) =>
       typeof v === 'number'
         ? `const float ${shape}_${key} = ${f(v)};`
-        : `const vec3 ${shape}_${key} = vec3(${v.map(f).join(', ')});`,
+        : v.length === 3
+          ? `const vec3 ${shape}_${key} = vec3(${v.map(f).join(', ')});`
+          : `const float ${shape}_${key}[${v.length}] = float[${v.length}](${v.map(f).join(', ')});`,
     ),
   )
   .join('\n');
@@ -37,38 +40,69 @@ vec4 shape_ring(vec3 s, vec3 r) {
 }`,
   },
   {
-    // 가운데가 가장 높은 타워 3개: 정면 파사드(창문 격자) + 옆면 + 윤곽선
+    // 도시 스카이라인: 폭·높이가 다른 건물 5개 + 가운데 타워의 계단식 크라운과 안테나 + 플라자 지상선 + 로비 입구.
+    // 정면은 창문 칸 안에만 점을 두고, 창문마다 밝기를 달리해 일부가 켜진 것처럼 보이게 한다. 가시도는 1 이하만 쓴다
     name: 'building',
     glsl: /* glsl */ `
+float building_weight(int k, int mode) {
+  return mode == 0 ? building_w[k] * building_h[k] : (mode == 1 ? building_w[k] + building_h[k] : building_h[k]);
+}
+int building_pick(float u, int mode) {
+  float total = 0.0;
+  for (int k = 0; k < building_x.length(); k++) total += building_weight(k, mode);
+  float acc = 0.0;
+  for (int k = 0; k < building_x.length(); k++) {
+    acc += building_weight(k, mode);
+    if (u * total < acc) return k;
+  }
+  return building_x.length() - 1;
+}
 vec4 shape_building(vec3 s, vec3 r) {
-  vec3 area = building_w * building_h; // 타워는 정면 면적에 비례해 고른다
-  float pick = s.x * (area.x + area.y + area.z);
-  int k = pick < area.x ? 0 : (pick < area.x + area.y ? 1 : 2);
+  float front = 0.5 * building_depth;
+  float tx = building_x[2];
+  float tz = building_z[2] + front;
+  if (s.y < uOutline) {
+    float e = s.y / uOutline;
+    if (e < 0.14) { // 플라자: 앞뒤 지상선 두 줄
+      float z = r.z < 0.6 ? building_plazaFront : building_plazaBack;
+      return vec4(mix(building_plazaX0, building_plazaX1, r.x), building_base, z, 0.8);
+    }
+    if (e < 0.2) { // 안테나
+      float top = building_base + building_y0[6] + building_h[6];
+      return vec4(tx, top + r.y * building_antenna, tz - 0.5 * front, 1.0);
+    }
+    // 상자 윤곽: 지붕선, 정면 양쪽 모서리, 옆면 지붕선 (둘레에 비례해 상자를 고른다)
+    int k = building_pick(s.x, 1);
+    float left = building_x[k] - 0.5 * building_w[k];
+    float right = left + building_w[k];
+    float bottom = building_base + building_y0[k];
+    float top = bottom + building_h[k];
+    float zf = building_z[k] + front;
+    if (r.z < 0.32) return vec4(mix(left, right, r.x), top, zf, 1.0);
+    if (r.z < 0.56) return vec4(left, mix(bottom, top, r.x), zf, 0.85);
+    if (r.z < 0.8) return vec4(right, mix(bottom, top, r.x), zf, 0.85);
+    return vec4(right, top, zf - r.x * building_depth, 0.7);
+  }
+  if (s.y < uOutline + BUILDING_SIDE) { // 옆면: 희미하게
+    int k = building_pick(s.x, 2);
+    float right = building_x[k] + 0.5 * building_w[k];
+    float bottom = building_base + building_y0[k];
+    return vec4(right, bottom + r.y * building_h[k], building_z[k] + front - r.x * building_depth, building_wall);
+  }
+  if (s.y < uOutline + BUILDING_SIDE + BUILDING_LOBBY) { // 로비 입구: 타워 1층 가운데의 밝은 영역
+    return vec4(tx + (r.x - 0.5) * building_lobbyW, building_base + r.y * building_lobbyH, tz + 0.01, 1.0);
+  }
+  // 정면 창문 격자: 점은 창문 칸 안에만 놓인다 (면적에 비례해 상자를 고른다)
+  int k = building_pick(s.x, 0);
   float w = building_w[k];
   float h = building_h[k];
-  float left = building_x[k] - 0.5 * w;
-  float right = left + w;
-  float front = 0.5 * building_depth;
-  float y = building_base + r.y * h;
-  float top = building_base + h;
-  if (s.y < uOutline) {
-    // 윤곽선: 지붕선(정면, 옆면)과 세로 모서리 3개
-    float e = s.y / uOutline;
-    if (e < 0.35) return vec4(left + r.x * w, top, front, 1.0);
-    if (e < 0.5) return vec4(right, top, front - r.x * building_depth, 1.0);
-    if (e < 0.68) return vec4(left, y, front, 1.0);
-    if (e < 0.86) return vec4(right, y, front, 1.0);
-    return vec4(right, y, -front, 1.0);
-  }
-  if (s.y < uOutline + BUILDING_SIDE) return vec4(right, y, front - r.x * building_depth, building_wall);
-  // 정면: 창문 격자에서 켜진 창 안의 점만 밝다
-  vec2 n = max(vec2(1.0), floor(vec2(w, h) / building_cell));
+  vec2 n = vec2(building_cols[k], max(1.0, floor(h / building_floor)));
   vec2 g = r.xy * n;
   vec2 c = floor(g);
-  vec2 q = fract(g);
-  float lit = step(1.0 - building_lit, fract(sin(dot(c + float(k) * 17.0, vec2(127.1, 311.7))) * 43758.5453));
-  float inWindow = step(0.2, q.x) * step(q.x, 0.8) * step(0.25, q.y) * step(q.y, 0.8);
-  return vec4(left + r.x * w, y, front, mix(building_wall, 1.0, lit * inWindow));
+  vec2 local = (c + vec2(0.2, 0.25) + fract(g) * vec2(0.6, 0.55)) / n;
+  float hsh = fract(sin(dot(c + float(k) * 31.0, vec2(127.1, 311.7))) * 43758.5453);
+  float alpha = hsh > 1.0 - building_lit ? mix(0.75, 1.0, fract(hsh * 7.0)) : mix(0.1, 0.3, fract(hsh * 13.0));
+  return vec4(building_x[k] - 0.5 * w + local.x * w, building_base + building_y0[k] + local.y * h, building_z[k] + front, alpha);
 }`,
   },
   {

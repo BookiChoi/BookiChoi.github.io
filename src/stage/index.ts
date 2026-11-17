@@ -328,7 +328,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   );
   if (!document.hidden) start();
 
-  // 3D 책: 표지 폰트가 로드된 뒤 준비된다. 준비되면 books-on으로 HTML 목록을 시각적으로만 숨긴다
+  // 3D 책: 책등 폰트가 로드된 뒤 준비된다. 준비되면 books-on으로 HTML 목록을 시각적으로만 숨기고 캐러셀 버튼을 보인다
   createBooks({ mobile: mobile || touch, accent: colors.b, signal })
     .then((created) => {
       if (!created) return;

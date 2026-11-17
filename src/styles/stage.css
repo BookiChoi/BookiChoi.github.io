@@ -73,8 +73,10 @@ main.stage-main {
 }
 /* S0: 불투명한 밝은 배경이 고정 캔버스(점 구름)를 가린다. 스크롤하면 위로 밀려 올라가며 어두운 스테이지가 드러난다 */
 .s0 { justify-items: center; background: var(--hero-bg); color: var(--hero-fg); overflow: hidden; padding-inline: 0.75rem; }
-/* 잉크 캔버스: S0 전체, 글자 위에 normal 합성 */
-.hero-ink { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; }
+/* 잉크 캔버스: S0 전체, 배경 위·글자 아래. 잉크가 이름을 덮지 않는다 */
+.hero-ink { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; pointer-events: none; }
+.s0 > .hero-name { position: relative; z-index: 1; }
+.s0 > .scroll-hint { z-index: 1; }
 .wrap { width: 100%; max-width: 1100px; margin: 0 auto; }
 /* 섹션 번호 라벨(01 Business ...). s1은 p, s2~s4는 h2 */
 .eyebrow { font-weight: 400; letter-spacing: 0.2em; text-transform: uppercase; margin: 0 0 1.5rem; }
@@ -82,11 +84,27 @@ main.stage-main {
 .statements { list-style: none; padding: 0; margin: 0; max-width: 52rem; }
 .statements li { border-top: 1px solid var(--border); padding: 1rem 0; }
 /* S5(프로젝트): 최소 한 화면, 더 길면 섹션 안에서 스크롤. 캔버스가 비치도록 배경을 두지 않고, 글자는 그림자로 받친다 */
-#s5 { padding: calc(var(--header-h) + 4rem) 1.5rem 6rem; }
+#s5 { position: relative; padding: calc(var(--header-h) + 4rem) 1.5rem 6rem; }
 #projects { max-width: 1100px; margin: 0 auto; text-shadow: 0 0 2px var(--bg), 0 0 14px var(--bg); }
 
 /* --- 3D 책 (S5): 책은 고정 캔버스에 그려진다. 준비되면(html.books-on) 링크 목록은 시각적으로만 숨기고 포커스는 가능하게 둔다 --- */
 .books-on .project-list { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* 캐러셀: 가로 스와이프는 책이, 세로 스와이프는 스냅 스크롤이 받는다 */
+.books-on #s5 { touch-action: pan-y; user-select: none; }
+.book-nav { display: none; }
+.books-on .book-nav { display: flex; gap: 0.75rem; position: absolute; left: 50%; bottom: 2.5rem; transform: translateX(-50%); z-index: 1; }
+.book-nav button {
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  background: rgba(5, 5, 7, 0.6);
+  color: var(--text);
+  font: 1.1rem/1 var(--font-mono);
+  cursor: pointer;
+}
+.book-nav button:hover { border-color: var(--accent); color: var(--accent); }
+.book-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .book-tip {
   position: fixed;
   left: 0;

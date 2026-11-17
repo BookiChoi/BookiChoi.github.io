@@ -16,7 +16,28 @@ export const PARAMS = {
   // shape 치수 (SHAPES 순서: 0 ring, 1 building, 2 dataFlow, 3 bars, 4 bulb, 5 band)
   ring: { radius: 1.4, thickness: 0.35, depth: 0.12 },
   // 타워 3개의 x 중심 / 폭 / 높이. cell은 창문 한 칸 크기, lit은 켜진 창 비율, wall은 벽과 꺼진 창의 가시도
-  building: { x: [-1.15, 0, 1.15], w: [0.8, 0.95, 0.8], h: [1.9, 2.9, 2.3], depth: 0.6, base: -1.45, cell: 0.2, lit: 0.45, wall: 0.25 },
+  // 상자 7개: 0~4는 건물(2가 가운데 타워), 5~6은 타워 위 계단식 setback 크라운. y0은 base 위 시작 높이, z는 앞뒤 위치(옆 건물은 뒤로)
+  // cols는 창문 열 수, floor는 층 높이, lit은 켜진 창 비율, wall은 옆면 가시도. 모든 가시도는 1 이하(1 초과 강조는 전구 전용)
+  building: {
+    x: [-1.6, -0.9, 0.1, 1.05, 1.75, 0.1, 0.1],
+    w: [0.9, 0.75, 1.15, 0.8, 0.95, 0.83, 0.48],
+    h: [1.3, 2.0, 2.7, 2.15, 1.2, 0.34, 0.24],
+    y0: [0, 0, 0, 0, 0, 2.7, 3.04],
+    z: [-0.4, -0.15, 0.15, -0.15, -0.4, 0.15, 0.15],
+    cols: [7, 6, 9, 6, 8, 7, 4],
+    depth: 0.6,
+    base: -1.55,
+    floor: 0.14,
+    lit: 0.4,
+    wall: 0.18,
+    antenna: 0.45,
+    lobbyW: 0.42,
+    lobbyH: 0.26,
+    plazaX0: -2.4,
+    plazaX1: 2.6,
+    plazaFront: 1.0,
+    plazaBack: -0.9,
+  },
   // x0에서 x1로 흐르며 한 점으로 모인다. speed는 초당 진행 비율, hide는 래핑된 점이 왼쪽으로 돌아가는 동안 숨기는 시간(초)
   dataFlow: { count: 7, x0: -4.5, x1: 2.4, spread: 2.8, depth: 1.2, thickness: 0.12, wave: 0.12, speedMin: 0.06, speedMax: 0.11, hide: 1.5 },
   // 막대 높이는 장식용 오름세(실제 수치 아님). gap은 막대 사이 빈 비율, fill은 막대 면의 가시도, trendLift는 추세선이 막대 위로 뜨는 높이
@@ -34,9 +55,12 @@ export const PARAMS = {
   outline: { 512: 0.18, 256: 0.28, 128: 0.45 }, // building과 bars에서 윤곽선에 쓰는 점 비율. 점이 적은 tier일수록 윤곽 위주
 
   // 3D 책 줄 (S5). 길이 단위는 책 scene의 월드 유닛
-  blankBooks: 8, // 양옆 장식용 빈 책 수(모바일은 0). 0이면 실제 프로젝트 책만
+  blankBooks: 8, // 캐러셀 고리에 섞는 장식용 빈 책 수. 0이면 실제 프로젝트 책만
   books: {
-    size: [1, 1.5, 0.2], // 폭, 높이, 두께
+    size: [1, 1.5, 0.2], // 폭, 높이, 두께(기준)
+    radius: 0.02, // 모서리 둥글기
+    heightJitter: 0.08, // 책마다 높이 ±8%
+    thickness: [0.16, 0.26], // 책마다 두께 범위
     appear: [4.2, 5], // 이 sec 구간에서 아래에서 올라온다
     stagger: 0.6, // 등장 순서 차이(0이면 동시에)
     rise: 4.5, // 등장 전 숨는 깊이(아래쪽)
@@ -45,6 +69,17 @@ export const PARAMS = {
     spacingMobile: 0.95,
     yaw: 0.96, // 기본 자세: 책장을 비스듬히 본 각도(rad, 약 55°). 책등과 표지 일부가 보인다
     yawMobile: 0.45, // 모바일은 표지가 더 보이게
+    blankMobile: 4, // 모바일 장식 책 상한(루프가 보이게)
+    mobileVisible: 3.3, // 모바일에서 화면 폭에 들어오는 책 수
+    centerTurn: 0.55, // 가운데 슬롯 책이 정면 쪽으로 도는 비율(표지가 읽히게)
+    centerPush: 0.35, // 가운데 슬롯 책이 앞으로 나오는 거리
+    edgeFade: 1.4, // 고리 끝에서 작아지며 사라지는 구간(책 간격 배수)
+    edgeSink: 0.9, // 사라지며 가라앉는 깊이
+    drift: 0.12, // 자동 드리프트 속도(월드/초)
+    driftDelay: 3000, // 마지막 입력 뒤 이만큼(ms) 지나야 드리프트
+    friction: 4, // 드래그를 놓은 뒤 관성 감쇠(1/s)
+    inertiaStop: 0.15, // 관성이 이 속도 아래로 떨어지면 슬롯 정렬
+    snapSpring: 60, // 슬롯 정렬 스프링(임계감쇠)
     spring: 70, // 책 스프링 강도
     damping: 12,
     waveRadius: 1.1, // 포인터 파도의 폭
@@ -77,8 +112,8 @@ export const PARAMS = {
   // shift: 가로가 넓은 화면에서 도형을 오른쪽으로 옮기는 거리(글이 왼쪽에 있어서). drift: 느린 좌우 이동 폭
   fov: 45,
   cameraKeys: [
-    { pos: [-0.6, 1.1, 6.6], look: [0, 0, 0], shift: 1.9, drift: 0.5 }, // s0: 가려진 동안. s1로 가며 카메라만 다가간다
-    { pos: [1.3, 0.35, 5.6], look: [0, 0, 0], shift: 1.9, drift: 0.5 }, // building: 약간 비스듬히, 천천히
+    { pos: [-0.6, 1.3, 7.6], look: [0, 0.3, 0], shift: 1.75, drift: 0.4 }, // s0: 가려진 동안. s1로 가며 카메라만 다가간다
+    { pos: [1.3, 0.6, 6.9], look: [0, 0.3, 0], shift: 1.75, drift: 0.4 }, // building: 약간 비스듬히, 천천히
     { pos: [0, 0, 5.2], look: [0, 0, 0], shift: 0.6, drift: 0 },
     { pos: [0.4, 0.2, 5.4], look: [0, 0, 0], shift: 1.3, drift: 0 },
     { pos: [0, 0.5, 5], look: [0, 0.05, 0], shift: 1.5, drift: 0 },

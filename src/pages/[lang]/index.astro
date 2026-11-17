@@ -102,6 +102,10 @@ const books = JSON.stringify(
         </ul>
       </div>
       <script type="application/json" id="books-data" set:html={books} />
+      <div class="book-nav">
+        <button type="button" class="book-prev" aria-label={t.prev}>←</button>
+        <button type="button" class="book-next" aria-label={t.next}>→</button>
+      </div>
       <div id="book-tip" class="book-tip" aria-hidden="true" hidden>
         <strong></strong>
         <p></p>
