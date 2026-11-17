@@ -3,14 +3,15 @@
 // 부위별 점 분배 비율은 shaders.ts 맨 위 RATIOS에 있다.
 export const PARAMS = {
   // 시뮬레이션
-  spring: 3, // origin으로 당기는 힘 (입장이 끝난 뒤의 평소 값)
-  damping: 3, // 속도 감쇠 (1/s)
+  spring: 7.5, // origin으로 당기는 힘 (입장이 끝난 뒤의 평소 값). 이전 3 (2.5배)
+  damping: 5.5, // 속도 감쇠 (1/s). 임계감쇠 2√spring 근처로 맞춰 오버슈트를 없앤다. 이전 3
+  secSmooth: 14, // 스크롤 sec가 목표를 따라가는 빠르기 (1/s). 이전 8
   introDuration: 2, // 입장: 흩어진 점이 shape로 모이는 데 걸리는 시간(초)
-  noiseAmp: 0.1, // curl noise 세기. 섹션별 배율은 sectionNoise
+  noiseAmp: 0.25, // (스프링과 같은 배율로 올려 흔들림 크기 유지, 이전 0.1) curl noise 세기. 섹션별 배율은 sectionNoise
   noiseFreq: 0.9,
   noiseSpeed: 0.12,
   pointerRadius: 0.9,
-  pointerForce: 6,
+  pointerForce: 15, // 이전 6 (스프링 배율에 맞춤)
 
   // shape 치수 (SHAPES 순서: 0 ring, 1 building, 2 dataFlow, 3 bars, 4 bulb, 5 band)
   ring: { radius: 1.4, thickness: 0.35, depth: 0.12 },

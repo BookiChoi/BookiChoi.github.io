@@ -2,6 +2,7 @@
 import { getCollection } from 'astro:content';
 import Base from '../../layouts/Base.astro';
 import SectionNav from '../../components/SectionNav.astro';
+import NameInk from '../../components/NameInk.astro';
 import Stage from '../../components/Stage.astro';
 // display 타입 프리셋 a/b/c 폰트(홈 전용). 브라우저는 실제로 쓰는 프리셋의 파일만 내려받는다.
 import '@fontsource-variable/fraunces/full.css';
@@ -41,6 +42,7 @@ const sections = [
   <SectionNav label={t.sections} items={sections} />
   <main id="main" class="stage-main" data-snap>
     <section id="s0" class="snap screen s0">
+      <NameInk>
       <h1 class="hero-name display" aria-label={SITE_NAME}>
         {words.map((w, wi) => {
           const Word = wi === words.length - 1 ? 'em' : 'span';
@@ -49,6 +51,7 @@ const sections = [
           );
         })}
       </h1>
+      </NameInk>
       <p class="scroll-hint label" aria-hidden="true">{t.scroll}<span class="scroll-line"></span></p>
     </section>
     <section id="s1" class="snap screen">

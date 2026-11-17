@@ -5,6 +5,8 @@ export function createDebug(): ((text: string) => void) | null {
   const el = document.createElement('div');
   el.id = 'stage-debug';
   const pre = document.createElement('pre');
+  const ink = document.createElement('pre');
+  ink.id = 'stage-debug-ink';
   const nav = document.createElement('p');
   nav.append('type');
   for (const type of ['a', 'b', 'c']) {
@@ -15,9 +17,15 @@ export function createDebug(): ((text: string) => void) | null {
     if (document.documentElement.dataset.type === type) a.setAttribute('aria-current', 'true');
     nav.append(' ', a);
   }
-  el.append(pre, nav);
+  el.append(pre, ink, nav);
   document.body.append(el);
   return (text) => {
     pre.textContent = text;
   };
+}
+
+/** 잉크 상태 한 줄(블롭 수). 패널이 없으면(?debug 아님) 아무 일도 하지 않는다. */
+export function setInkDebug(text: string): void {
+  const el = document.getElementById('stage-debug-ink');
+  if (el) el.textContent = text;
 }

@@ -1,0 +1,14 @@
+---
+// 히어로 이름의 잉크 효과 래퍼: <canvas>(잉크) 위에 h1(slot)이 multiply로 겹친다.
+// html.ink-on이 붙기 전에는 캔버스가 숨겨져 있어 h1은 평소 모습 그대로다.
+---
+<div class="name-ink">
+  <canvas aria-hidden="true"></canvas>
+  <slot />
+</div>
+
+<script>
+  import { initInk } from '../stage/ink';
+  const wrap = document.querySelector<HTMLElement>('.name-ink');
+  if (wrap) initInk(wrap);
+</script>

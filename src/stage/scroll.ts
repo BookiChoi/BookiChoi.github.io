@@ -1,6 +1,7 @@
+import { PARAMS } from './params';
+
 const IDS = ['s0', 's1', 's2', 's3', 's4', 's5'];
 const LAST = IDS.length - 1;
-const SMOOTH = 8; // 클수록 스크롤을 빨리 따라간다 (1/s)
 
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
 // 목표에 충분히 가까우면 스냅해서 끝값에 정확히 닿게 한다(정지 후에는 스타일 쓰기도 멈춘다)
@@ -41,7 +42,7 @@ export function createScroll() {
           break;
         }
       }
-      const k = 1 - Math.exp(-dt * SMOOTH);
+      const k = 1 - Math.exp(-dt * PARAMS.secSmooth);
       const sec = (state.sec = follow(state.sec, Math.max(0, target), k));
       const p = (state.p = follow(state.p, clamp01(y / max), k));
 

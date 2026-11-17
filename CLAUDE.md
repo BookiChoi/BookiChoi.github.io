@@ -47,3 +47,5 @@
 - 본문 `--font-body`는 Pretendard 우선(기존 Geist에서 변경): 한글 가독성과 홈/상세 페이지 일관성 때문. Geist 패키지와 Base.astro의 import는 남아 있지만 쓰이지 않는다.
 - 색은 tokens.css의 `--bg`, `--text`, `--accent`, `--insight`를 읽어 쓴다. `--insight`(따뜻한 노랑)는 인사이트 순간(s4의 점과 라벨)에만 쓴다. 스타일은 `src/styles/stage.css`.
 - 홈 섹션 id: `s0` 이름 / `s1` Business / `s2` Data / `s3` Analysis / `s4` Insight / `s5` Projects. `#projects` 목록은 `s5` 안에 있다. 섹션 문장은 전부 i18n(`TODO: 내 확인 필요`).
+- 이름 잉크(`src/components/NameInk.astro`, `src/stage/ink.ts`): `.name-ink` 래퍼 안에 `<canvas>`(기본색 + 컬러 블롭)와 기존 h1이 겹친다. `html.ink-on`일 때 h1은 검정 바탕 + 흰 글자 + `mix-blend-mode: multiply`, 래퍼는 `screen`+`isolation`이라 글자 안쪽에서만 잉크가 보이고 검정은 뒤의 점 구름에 영향이 없다. 글자는 DOM 그대로(SEO, 선택, 등장 애니메이션 유지). `ink-on`은 2D 컨텍스트 성공 + reduced-motion 아님일 때만 붙고, 아니면 h1은 평소 모습이다. **`main.stage-main`에 z-index를 두지 않는다**(쌓임 맥락이 생기면 screen 블렌딩이 점 구름에 닿지 못한다). 캔버스는 h1 상자(패딩 포함)와 같은 크기여야 한다. 블롭/입력/스윕 상수는 `ink.ts` 상단, 팔레트는 히어로 이름에만 사용. 블롭과 입력이 없으면 rAF를 멈춘다. `?debug` 패널에 `ink N`(블롭 수).
+- 점 이동 속도(`params.ts`): `spring` 7.5, `damping` 5.5(임계감쇠 근처), `secSmooth` 14(스크롤 sec 추종), 이에 맞춰 `noiseAmp` 0.25, `pointerForce` 15. 스프링을 올리면 노이즈/포인터 힘도 같은 배율로 올려야 흔들림 크기가 유지된다.
