@@ -7,6 +7,7 @@ import {
   ShaderMaterial,
   Vector2,
   Vector3,
+  Vector4,
   type Texture,
   type TextureDataType,
   type WebGLRenderer,
@@ -25,14 +26,18 @@ export const PARAMS = {
   noiseSpeed: 0.12,
   pointerRadius: 0.9,
   pointerForce: 6,
-  // shape
+  // shape (SHAPES 순서: 0 ring, 1 sphere, 2 dataSurface, 3 risingStreams, 4 band)
   ringRadius: 1.4,
   ringThickness: 0.35,
   ringDepth: 0.12,
   sphereRadius: 1.25,
   sphereJitter: 0.08,
-  shapeA: 0, // SHAPES 인덱스 (shaders.ts)
-  shapeB: 1,
+  surface: { width: 6.5, depth: 4.5, amp: 0.3, lines: 28, freq: 1.3, speed: 0.25, y: -0.5 },
+  // speed는 초당 높이 비율, hide는 위에서 래핑된 점이 아래로 돌아가는 동안 숨기는 시간(초)
+  streams: { count: 16, width: 6, height: 4.5, depth: 1.5, jitter: 0.08, speedMin: 0.04, speedMax: 0.14, hide: 1.2 },
+  band: { width: 11, amp: 0.45, thickness: 0.5, depth: 1.2, freq: 0.9, speed: 0.3 },
+  sectionShapes: [0, 1, 2, 3, 4], // 섹션 s0..s4가 쓰는 shape id. 이웃한 두 섹션 사이를 sec로 보간한다
+  dimAtProjects: 0.8, // 마지막 섹션(프로젝트)에서 점의 알파 배율. 크기에는 제곱근을 곱한다
   // 입장 연출 시작 위치
   scatterMin: 3, // 화면 가장자리 근처라 첫 프레임부터 점이 보인다
   scatterMax: 5,
@@ -42,12 +47,17 @@ export const PARAMS = {
   alpha: 0.2,
   colorSpeed: 1.5, // 속도 → 색 혼합 비중
   colorDist: 0.2, // 중심 거리 → 색 혼합 비중
-  // 카메라
+  // 카메라: 섹션별 위치/시선. sec로 보간하고 포인터 시선 이동을 그 위에 더한다
   fov: 45,
-  cameraZ: 5,
+  cameraKeys: [
+    { pos: [0, 0, 5], look: [0, 0, 0] },
+    { pos: [0, 0, 4.6], look: [0, 0, 0] },
+    { pos: [0, 2.2, 4.6], look: [0, -0.3, 0] }, // dataSurface를 약간 위에서 내려다본다
+    { pos: [0, 0, 5.5], look: [0, 0, 0] },
+    { pos: [0, 0, 5], look: [0, 0, 0] },
+  ],
   fitMargin: 1.3, // 좁은 화면에서 링이 잘리지 않게 뒤로 물러나는 여유
   gaze: 0.25, // 포인터에 따른 시선 이동량
-  scrollZoom: 0.8, // 스크롤 끝에서 다가가는 거리
 };
 
 export interface Particles {
@@ -56,7 +66,8 @@ export interface Particles {
   velTexture(): Texture;
   /** pxPerUnit: 거리 1에서 월드 1유닛이 차지하는 디바이스 픽셀 수 */
   setScale(pxPerUnit: number): void;
-  step(dt: number, time: number, morph: number, pointer: Vector3): void;
+  /** shapeA → shapeB를 mix(0..1)로 보간한 origin을 따라간다. dim은 알파 배율. */
+  step(dt: number, time: number, shapeA: number, shapeB: number, mix: number, dim: number, pointer: Vector3): void;
   dispose(): void;
 }
 
@@ -81,17 +92,24 @@ export function createParticles(
   gpu.setVariableDependencies(vel, [pos, vel]);
   gpu.setVariableDependencies(pos, [pos, vel]);
 
+  const { surface: sf, streams: st, band: bd } = P;
   const shape = {
+    uTime: { value: 0 },
     uRing: { value: new Vector3(P.ringRadius, P.ringThickness, P.ringDepth) },
     uSphere: { value: new Vector2(P.sphereRadius, P.sphereJitter) },
-    uShapeA: { value: P.shapeA },
-    uShapeB: { value: P.shapeB },
+    uSurface: { value: new Vector4(sf.width, sf.depth, sf.amp, sf.lines) },
+    uSurfaceWave: { value: new Vector3(sf.freq, sf.speed, sf.y) },
+    uStreams: { value: new Vector4(st.count, st.width, st.height, st.depth) },
+    uStreamFlow: { value: new Vector4(st.jitter, st.speedMin, st.speedMax, st.hide) },
+    uBand: { value: new Vector4(bd.width, bd.amp, bd.thickness, bd.depth) },
+    uBandWave: { value: new Vector2(bd.freq, bd.speed) },
+    uShapeA: { value: P.sectionShapes[0] },
+    uShapeB: { value: P.sectionShapes[0] },
   };
   const sim = {
     ...shape,
     uDt: { value: 0 },
-    uTime: { value: 0 },
-    uMorph: { value: 0 },
+    uMix: { value: 0 },
     uPointer: { value: new Vector3() },
     uSpring: { value: P.spring },
     uDamping: { value: P.damping },
@@ -131,6 +149,7 @@ export function createParticles(
     uSize: { value: P.pointSize * k },
     uScale: { value: 1 },
     uAlpha: { value: Math.min(1, P.alpha * k) },
+    uDim: { value: 1 },
     uColorA: { value: new Color(colors.a) },
     uColorB: { value: new Color(colors.b) },
     uColorSpeed: { value: P.colorSpeed },
@@ -162,7 +181,7 @@ export function createParticles(
     setScale(pxPerUnit) {
       draw.uScale.value = pxPerUnit;
     },
-    step(dt, time, morph, pointer) {
+    step(dt, time, shapeA, shapeB, mix, dim, pointer) {
       // 입장 구간은 introDuration 안에 수렴하는 임계감쇠 스프링(ω = 6/T), 끝나면 1초에 걸쳐 평소 값으로
       const w = 6 / P.introDuration;
       const a = Math.min(1, Math.max(0, time - P.introDuration));
@@ -170,7 +189,10 @@ export function createParticles(
       sim.uDamping.value = 2 * w + (P.damping - 2 * w) * a;
       sim.uDt.value = dt;
       sim.uTime.value = time;
-      sim.uMorph.value = morph;
+      sim.uShapeA.value = shapeA;
+      sim.uShapeB.value = shapeB;
+      sim.uMix.value = mix;
+      draw.uDim.value = dim;
       sim.uPointer.value.copy(pointer);
       gpu.compute();
       draw.tPos.value = gpu.getCurrentRenderTarget(pos).texture;

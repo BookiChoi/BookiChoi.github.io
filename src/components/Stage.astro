@@ -16,11 +16,11 @@ if (import.meta.env.PROD) {
 ---
 {stageChunk && <link rel="modulepreload" href={`/_astro/${stageChunk}`} />}
 <script is:inline>
-  // 콘텐츠가 그려지기 전에 실행: 타입 프리셋(쿼리 우선, 기본 a)과 이름 등장 대기.
+  // 콘텐츠가 그려지기 전에 실행: 타입 프리셋(쿼리 우선, 기본 c)과 이름 등장 대기.
   (() => {
     const root = document.documentElement;
     const type = new URLSearchParams(location.search).get('type');
-    root.dataset.type = type === 'b' || type === 'c' ? type : 'a';
+    root.dataset.type = type === 'a' || type === 'b' ? type : 'c';
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     // 이름 글자는 스테이지 첫 프레임('stage:ready') 또는 600ms 중 먼저 오는 때 등장한다
     root.classList.add('intro-wait');

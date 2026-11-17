@@ -1,5 +1,5 @@
 ---
-// 우측 섹션 인디케이터. 스테이지(WebGL)와 독립이라 no-webgl / reduced-motion에서도 동작하고, JS가 꺼지면 일반 앵커다.
+// 우측 섹션 인디케이터 + 현재 섹션 표시(data-active). 스테이지(WebGL)와 독립이라 no-webgl / reduced-motion에서도 동작하고, JS가 꺼지면 일반 앵커다.
 interface Props { label: string; items: { id: string; label: string }[] }
 const { label, items } = Astro.props;
 ---
@@ -8,9 +8,14 @@ const { label, items } = Astro.props;
     <a href={`#${item.id}`} aria-label={item.label} aria-current={i === 0 ? 'true' : undefined}></a>
   ))}
 </nav>
+<script is:inline>
+  // 콘텐츠가 그려지기 전에: JS가 있을 때만 섹션 텍스트의 "숨김 → 등장" 규칙(stage.css)을 켠다
+  if ('IntersectionObserver' in window) document.documentElement.classList.add('js-sections');
+</script>
 
 <script>
   const links = [...document.querySelectorAll<HTMLAnchorElement>('.section-nav a')];
+  const sections: HTMLElement[] = [];
   const io = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
@@ -19,6 +24,10 @@ const { label, items } = Astro.props;
           if (a.hash === `#${entry.target.id}`) a.setAttribute('aria-current', 'true');
           else a.removeAttribute('aria-current');
         }
+        for (const s of sections) {
+          if (s === entry.target) s.setAttribute('data-active', 'true');
+          else s.removeAttribute('data-active');
+        }
       }
     },
     { rootMargin: '-50% 0px -50% 0px' }, // 화면 세로 중앙선에 걸린 섹션이 현재 섹션
@@ -26,6 +35,7 @@ const { label, items } = Astro.props;
   for (const a of links) {
     const section = document.getElementById(a.hash.slice(1));
     if (!section) continue;
+    sections.push(section);
     io.observe(section);
     a.addEventListener('click', (e) => {
       e.preventDefault(); // 주소에 해시를 남기지 않는다. 부드럽게 갈지는 CSS scroll-behavior가 정한다

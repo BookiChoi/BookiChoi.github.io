@@ -52,28 +52,28 @@ const sections = [
     </section>
     <section id="s1" class="snap screen">
       <div class="wrap">
-        <h2 class="role display">{roleWords.slice(0, -1).join(' ')} <em>{roleWords.at(-1)}</em></h2>
-        <p class="statement">{t.intro}</p>
+        <h2 class="role display reveal" style="--i:0">{roleWords.slice(0, -1).join(' ')} <em>{roleWords.at(-1)}</em></h2>
+        <p class="statement reveal" style="--i:1">{t.intro}</p>
       </div>
     </section>
     <section id="s2" class="snap screen">
       <div class="wrap">
-        <h2 class="label">{t.s2Label}</h2>
-        <ul class="statements">{t.s2.map((line) => <li class="statement">{line}</li>)}</ul>
+        <h2 class="label reveal" style="--i:0">{t.s2Label}</h2>
+        <ul class="statements">{t.s2.map((line, i) => <li class="statement reveal" style={`--i:${i + 1}`}>{line}</li>)}</ul>
       </div>
     </section>
     <section id="s3" class="snap screen">
       <div class="wrap">
-        <h2 class="label">{t.s3Label}</h2>
-        <ul class="statements">{t.s3.map((line) => <li class="statement">{line}</li>)}</ul>
+        <h2 class="label reveal" style="--i:0">{t.s3Label}</h2>
+        <ul class="statements">{t.s3.map((line, i) => <li class="statement reveal" style={`--i:${i + 1}`}>{line}</li>)}</ul>
       </div>
     </section>
     <section id="s4" class="snap">
       <div id="projects">
-        <h2>{t.projects}</h2>
+        <h2 class="reveal" style="--i:0">{t.projects}</h2>
         <ul class="project-list">
-          {items.map((p) => (
-            <li>
+          {items.map((p, i) => (
+            <li class="reveal" style={`--i:${i + 1}`}>
               <a href={`/${lang}/projects/${p.id.split('/')[0]}/`}>{p.data.title}</a>
               <p>{p.data.summary}</p>
             </li>

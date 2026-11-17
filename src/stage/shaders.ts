@@ -1,35 +1,92 @@
-// shape: seed(0..1 vec3) → 월드 좌표. 배열에 항목을 추가하면 shapeOrigin 분기가 자동으로 생긴다.
-// 배열 인덱스가 shape id (uShapeA / uShapeB 유니폼 값).
+// shape: seed(0..1 vec3) → vec4(월드 좌표 xyz, 가시도 w). 배열에 항목을 추가하면 shapeOrigin 분기가 자동으로 생긴다.
+// 배열 인덱스가 shape id (uShapeA / uShapeB 유니폼 값). 섹션별 배정은 PARAMS.sectionShapes.
 export const SHAPES = [
   {
     name: 'ring',
     glsl: /* glsl */ `
-vec3 shape_ring(vec3 s) {
+vec4 shape_ring(vec3 s) {
   float a = s.x * 6.2831853;
   float t = s.y * 2.0 - 1.0;
   float r = uRing.x + t * abs(t) * uRing.y * 0.5; // 가운데가 더 촘촘
-  return vec3(cos(a) * r, sin(a) * r, (s.z - 0.5) * uRing.z);
+  return vec4(cos(a) * r, sin(a) * r, (s.z - 0.5) * uRing.z, 1.0);
 }`,
   },
   {
     name: 'sphere',
     glsl: /* glsl */ `
-vec3 shape_sphere(vec3 s) {
+vec4 shape_sphere(vec3 s) {
   float a = s.x * 6.2831853;
   float z = 1.0 - 2.0 * s.y;
   float r = sqrt(max(0.0, 1.0 - z * z));
-  return vec3(cos(a) * r, sin(a) * r, z) * uSphere.x * (1.0 + (s.z - 0.5) * uSphere.y);
+  return vec4(vec3(cos(a) * r, sin(a) * r, z) * uSphere.x * (1.0 + (s.z - 0.5) * uSphere.y), 1.0);
+}`,
+  },
+  {
+    // xz 평면의 격자선 + sin파 합으로 된 높이(차트/지형)
+    name: 'dataSurface',
+    glsl: /* glsl */ `
+vec4 shape_dataSurface(vec3 s) {
+  vec2 uv = s.xz;
+  vec2 n = vec2(uSurface.w, max(1.0, floor(uSurface.w * uSurface.y / uSurface.x)));
+  vec2 q = (floor(uv * n) + 0.5) / n;
+  uv = s.y < 0.5 ? vec2(q.x, uv.y) : vec2(uv.x, q.y); // 절반은 x를, 절반은 z를 선으로 양자화
+  float x = (uv.x - 0.5) * uSurface.x;
+  float z = (uv.y - 0.5) * uSurface.y;
+  float f = uSurfaceWave.x;
+  float w = uTime * uSurfaceWave.y;
+  float y = uSurfaceWave.z + uSurface.z * (sin(f * x + w) + 0.6 * sin(1.7 * f * z - 0.8 * w) + 0.4 * sin(0.9 * f * (x + z) + 1.3 * w));
+  return vec4(x, y, z, 1.0);
+}`,
+  },
+  {
+    // 세로 기둥을 따라 위로 흐르다 위에서 래핑. 래핑 직후 아래로 돌아가는 동안은 가시도 0.
+    name: 'risingStreams',
+    glsl: /* glsl */ `
+vec4 shape_risingStreams(vec3 s) {
+  float n = uStreams.x;
+  float c = floor(s.x * n);
+  float j = fract(s.x * n) * 2.0 - 1.0;
+  float h = fract(sin(c * 127.1 + 3.7) * 43758.5453); // 열마다 고정된 난수
+  float x = ((c + 0.5) / n - 0.5) * uStreams.y + j * abs(j) * uStreamFlow.x;
+  float z = (h - 0.5) * uStreams.w + (fract(s.z * 13.0) - 0.5) * uStreamFlow.x;
+  float speed = mix(uStreamFlow.y, uStreamFlow.z, s.z);
+  float phase = fract(s.y + h + uTime * speed);
+  float sinceWrap = phase / speed; // 래핑 뒤 지난 시간(초)
+  float vis = smoothstep(uStreamFlow.w, uStreamFlow.w + 1.0, sinceWrap) * (1.0 - smoothstep(0.85, 0.97, phase));
+  return vec4(x, (phase - 0.5) * uStreams.z, z, vis);
+}`,
+  },
+  {
+    // 화면 가로 전체를 지나는 물결 띠
+    name: 'band',
+    glsl: /* glsl */ `
+vec4 shape_band(vec3 s) {
+  float x = (s.x - 0.5) * uBand.x;
+  float f = uBandWave.x;
+  float w = uTime * uBandWave.y;
+  float t = s.y * 2.0 - 1.0;
+  float thick = uBand.z * (0.6 + 0.4 * sin(1.7 * f * x - w)); // 폭이 x를 따라 숨쉰다
+  float y = uBand.y * (sin(f * x + w) + 0.5 * sin(2.3 * f * x - 1.4 * w)) + t * abs(t) * thick * 0.5;
+  float z = (s.z - 0.5) * uBand.w + 0.3 * uBand.y * cos(f * x + w);
+  return vec4(x, y, z, 1.0);
 }`,
   },
 ] as const;
 
 const shapes = /* glsl */ `
-uniform vec3 uRing;   // 반지름, 두께, z 두께
-uniform vec2 uSphere; // 반지름, 표면 두께 비율
+uniform float uTime;
+uniform vec3 uRing;        // 반지름, 두께, z 두께
+uniform vec2 uSphere;      // 반지름, 표면 두께 비율
+uniform vec4 uSurface;     // 너비, 깊이, 진폭, 격자선 수
+uniform vec3 uSurfaceWave; // 주파수, 속도, y 위치
+uniform vec4 uStreams;     // 열 수, 너비, 높이, 깊이
+uniform vec4 uStreamFlow;  // 지터, 최소 속도, 최대 속도, 래핑 뒤 숨김 시간(초)
+uniform vec4 uBand;        // 너비, 진폭, 두께, 깊이
+uniform vec2 uBandWave;    // 주파수, 속도
 ${SHAPES.map((s) => s.glsl).join('\n')}
-vec3 shapeOrigin(int id, vec3 s) {
+vec4 shapeOrigin(int id, vec3 s) {
 ${SHAPES.map((s, i) => `  if (id == ${i}) return shape_${s.name}(s);`).join('\n')}
-  return vec3(0.0);
+  return vec4(0.0, 0.0, 0.0, 1.0);
 }`;
 
 // 점마다 고정 시드: 텍셀 좌표의 정수 해시 (pcg3d, Jarzynski & Olano 2020)
@@ -108,7 +165,7 @@ vec3 curlNoise(vec3 p) {
 
 // tPos, tVel 샘플러와 resolution define은 GPUComputationRenderer가 앞에 붙인다.
 export const velocityFrag = /* glsl */ `
-uniform float uDt, uTime, uMorph;
+uniform float uDt, uMix;
 uniform float uSpring, uDamping, uNoiseAmp, uNoiseFreq, uNoiseSpeed, uPointerRadius, uPointerForce;
 uniform vec3 uPointer;
 uniform int uShapeA, uShapeB;
@@ -120,14 +177,15 @@ void main() {
   vec3 pos = texture2D(tPos, uv).xyz;
   vec3 vel = texture2D(tVel, uv).xyz;
   vec3 s = seedOf(gl_FragCoord.xy, 0u);
-  vec3 origin = mix(shapeOrigin(uShapeA, s), shapeOrigin(uShapeB, s), uMorph);
-  vec3 acc = (origin - pos) * uSpring;
+  // 점당 shape 호출은 2번: 현재 섹션 shape와 다음 섹션 shape
+  vec4 origin = mix(shapeOrigin(uShapeA, s), shapeOrigin(uShapeB, s), uMix);
+  vec3 acc = (origin.xyz - pos) * uSpring;
   acc += curlNoise(pos * uNoiseFreq + uTime * uNoiseSpeed) * uNoiseAmp;
   vec3 d = pos - uPointer;
   float dist = length(d);
   acc += d / (dist + 1e-4) * uPointerForce * smoothstep(uPointerRadius, 0.0, dist);
   vel = (vel + acc * uDt) * exp(-uDamping * uDt);
-  gl_FragColor = vec4(vel, 1.0);
+  gl_FragColor = vec4(vel, origin.w); // w: shape가 정한 가시도(렌더에서 알파에 곱한다)
 }`;
 
 export const positionFrag = /* glsl */ `
@@ -145,7 +203,7 @@ uniform vec3 uScatter; // 최소 반지름, 최대 반지름, z 두께
 ${shapes}
 ${seed}
 void main() {
-  vec3 origin = shapeOrigin(uShapeA, seedOf(gl_FragCoord.xy, 0u));
+  vec3 origin = shapeOrigin(uShapeA, seedOf(gl_FragCoord.xy, 0u)).xyz;
   vec3 s = seedOf(gl_FragCoord.xy, 1u);
   float a = s.x * 6.2831853;
   vec3 far = vec3(cos(a), sin(a), 0.0) * mix(uScatter.x, uScatter.y, s.y) + vec3(0.0, 0.0, (s.z - 0.5) * uScatter.z);
@@ -155,14 +213,17 @@ void main() {
 // position 어트리뷰트의 xy는 시뮬 텍스처 uv다.
 export const pointsVert = /* glsl */ `
 uniform sampler2D tPos, tVel;
-uniform float uSize, uScale, uColorSpeed, uColorDist;
+uniform float uSize, uScale, uColorSpeed, uColorDist, uDim;
 varying float vMix;
+varying float vVis;
 void main() {
   vec3 pos = texture2D(tPos, position.xy).xyz;
-  vec3 vel = texture2D(tVel, position.xy).xyz;
+  vec4 velVis = texture2D(tVel, position.xy);
+  vec3 vel = velVis.xyz;
+  vVis = velVis.w * uDim;
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = max(1.0, uSize * uScale / -mv.z);
+  gl_PointSize = max(1.0, uSize * sqrt(uDim) * uScale / -mv.z);
   vMix = clamp(length(vel) * uColorSpeed + length(pos) * uColorDist, 0.0, 1.0);
 }`;
 
@@ -170,8 +231,9 @@ export const pointsFrag = /* glsl */ `
 uniform vec3 uColorA, uColorB;
 uniform float uAlpha;
 varying float vMix;
+varying float vVis;
 void main() {
   float a = smoothstep(0.5, 0.0, length(gl_PointCoord - 0.5));
-  gl_FragColor = vec4(mix(uColorA, uColorB, vMix), a * a * uAlpha);
+  gl_FragColor = vec4(mix(uColorA, uColorB, vMix), a * a * uAlpha * vVis);
   #include <colorspace_fragment>
 }`;

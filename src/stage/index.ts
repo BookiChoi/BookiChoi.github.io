@@ -37,12 +37,12 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   const root = document.documentElement;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const debug = createDebug();
-  const info = { webgl2: false, tex: 'none', tier: 0, dpr: 1, tReady: -1 };
+  const info = { webgl2: false, tex: 'none', tier: 0, dpr: 1, tReady: -1, shapeA: 0, shapeB: 0, mix: 0 };
   const report = (fps = 0, p = 0, sec = 0) =>
     debug?.(
       `tier ${info.tier} (${info.tier * info.tier} pts)\ndpr ${info.dpr.toFixed(2)}\nfps ${fps.toFixed(1)}\n` +
         `webgl2 ${info.webgl2}\ntex ${info.tex}\nreduced-motion ${reduced}\n` +
-        `--p ${p.toFixed(3)}  --sec ${sec.toFixed(3)}\nt_ready ${info.tReady < 0 ? '-' : `${Math.round(info.tReady)} ms`}`,
+        `--p ${p.toFixed(3)}  --sec ${sec.toFixed(3)}\nshape ${info.shapeA}→${info.shapeB}  uMix ${info.mix.toFixed(2)}\nt_ready ${info.tReady < 0 ? '-' : `${Math.round(info.tReady)} ms`}`,
     );
   // 첫 프레임이 그려졌다: 캔버스를 드러내고 이름 등장을 시작시킨다(Stage.astro 인라인 스크립트가 듣는다)
   const markReady = () => {
@@ -95,8 +95,26 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   scene.add(particles.points);
   const camera = new PerspectiveCamera(PARAMS.fov, 1, 0.1, 100);
   const tanHalf = Math.tan((PARAMS.fov * Math.PI) / 360);
-  let baseZ = PARAMS.cameraZ;
+  const keys = PARAMS.cameraKeys;
+  const shapes = PARAMS.sectionShapes;
+  const lastPair = keys.length - 2; // 마지막 보간 구간의 시작 섹션
+  let fit = 1; // 좁은 화면에서 카메라를 뒤로 빼는 배율
   const scroll = createScroll(); // reduced-motion에서는 update를 부르지 않아 0에 머문다
+  // 현재 섹션 쌍과 보간값: shape와 카메라가 같은 값을 쓴다
+  const blend = { i: 0, mix: 0, dim: 1 };
+  const setBlend = (sec: number) => {
+    const i = Math.min(Math.floor(sec), lastPair);
+    const f = Math.min(1, Math.max(0, sec - i));
+    blend.i = i;
+    blend.mix = f * f * (3 - 2 * f);
+    blend.dim = 1 + (PARAMS.dimAtProjects - 1) * Math.min(1, Math.max(0, sec - lastPair));
+    info.shapeA = shapes[i];
+    info.shapeB = shapes[i + 1];
+    info.mix = blend.mix;
+  };
+  setBlend(0);
+  const step = (dt: number, t: number) =>
+    particles.step(dt, t, shapes[blend.i], shapes[blend.i + 1], blend.mix, blend.dim, pointer);
 
   // 포인터 상태는 전부 미리 만들어 두고 프레임에서 재사용한다
   const ndc = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -105,8 +123,19 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   let pointerOn = false;
 
   const aim = () => {
-    camera.position.set(ndc.x * PARAMS.gaze, ndc.y * PARAMS.gaze, baseZ - scroll.p * PARAMS.scrollZoom);
-    camera.lookAt(0, 0, 0);
+    const a = keys[blend.i];
+    const b = keys[blend.i + 1];
+    const m = blend.mix;
+    camera.position.set(
+      (a.pos[0] + (b.pos[0] - a.pos[0]) * m) * fit + ndc.x * PARAMS.gaze,
+      (a.pos[1] + (b.pos[1] - a.pos[1]) * m) * fit + ndc.y * PARAMS.gaze,
+      (a.pos[2] + (b.pos[2] - a.pos[2]) * m) * fit,
+    );
+    camera.lookAt(
+      a.look[0] + (b.look[0] - a.look[0]) * m,
+      a.look[1] + (b.look[1] - a.look[1]) * m,
+      a.look[2] + (b.look[2] - a.look[2]) * m,
+    );
   };
 
   const resize = () => {
@@ -116,7 +145,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     // 세로 화면에서도 링 전체가 들어오게 카메라를 뒤로 뺀다
-    baseZ = Math.max(PARAMS.cameraZ, (PARAMS.ringRadius * PARAMS.fitMargin) / (tanHalf * camera.aspect));
+    fit = Math.max(1, (PARAMS.ringRadius * PARAMS.fitMargin) / (tanHalf * camera.aspect) / keys[0].pos[2]);
     particles.setScale(canvas.height / (2 * tanHalf));
     scroll.measure();
     if (reduced) {
@@ -162,6 +191,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     time += dt;
 
     scroll.update(dt);
+    setBlend(scroll.sec);
     if (touch) {
       // 터치 기기: 포인터 대신 느린 자동 시선 이동만
       ndc.tx = Math.sin(time * 0.25) * 0.6;
@@ -181,7 +211,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
       pointer.set(0, 0, 1e3);
     }
 
-    particles.step(dt, time, scroll.morph, pointer);
+    step(dt, time);
     renderer.render(scene, camera);
     if (!ready) {
       ready = true;
@@ -245,7 +275,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     // 정적 한 장: origin에서 시작해 몇 스텝만 돌리고 멈춘다. 스크롤/포인터/루프 없음.
     // 시간은 입장 구간 뒤로 넘겨 평소 스프링 값으로 돌린다
     const t0 = PARAMS.introDuration + 1;
-    for (let i = 0; i < STATIC_STEPS; i++) particles.step(1 / 30, t0 + i / 30, 0, pointer);
+    for (let i = 0; i < STATIC_STEPS; i++) step(1 / 30, t0 + i / 30);
     renderer.render(scene, camera);
     markReady();
     report();

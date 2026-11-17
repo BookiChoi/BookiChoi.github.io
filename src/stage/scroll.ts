@@ -25,8 +25,6 @@ export function createScroll() {
   const state = {
     p: 0,
     sec: 0,
-    /** 링→구체 morph 0..1: sec 0→1 구간 */
-    morph: 0,
     measure() {
       const y = window.scrollY;
       max = Math.max(1, root.scrollHeight - window.innerHeight);
@@ -46,8 +44,6 @@ export function createScroll() {
       const k = 1 - Math.exp(-dt * SMOOTH);
       const sec = (state.sec = follow(state.sec, Math.max(0, target), k));
       const p = (state.p = follow(state.p, clamp01(y / max), k));
-      const m = clamp01(sec);
-      state.morph = m * m * (3 - 2 * m);
 
       // 값이 변했을 때만 스타일을 쓴다(정지 상태에서는 문자열 생성 없음)
       if (p !== wroteP) root.style.setProperty('--p', (wroteP = p).toFixed(4));

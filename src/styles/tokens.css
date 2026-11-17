@@ -7,12 +7,12 @@
   --border: rgba(255, 255, 255, 0.08);
   --font-body: 'Pretendard Variable', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
-  /* display 타입 프리셋: <html data-type="a|b|c">. 속성이 없으면(JS 꺼짐) a. 폰트 CSS는 홈에서만 import한다. */
-  --font-display: 'Fraunces Variable', 'Pretendard Variable', serif; /* a: 소프트 세리프 */
+  /* display 타입 프리셋: <html data-type="a|b|c">. 기본(속성 없음, JS 꺼짐 포함)은 c. 폰트 CSS는 홈에서만 import한다. */
+  --font-display: 'Newsreader Variable', 'Pretendard Variable', serif; /* c: 에디토리얼 세리프, 강조 단어(em)는 italic */
   --display-weight: 300;
-  --display-tracking: -0.03em;
-  --display-settings: 'SOFT' 100, 'WONK' 0; /* opsz는 글자 크기를 따라 자동 */
-  --display-em-style: normal;
+  --display-tracking: -0.025em;
+  --display-settings: normal; /* opsz는 글자 크기를 따라 자동 */
+  --display-em-style: italic;
   --prose-max: 860px;
   --header-h: 3rem;
   --z-stage: 0;
@@ -25,14 +25,13 @@
   --font-display: 'Outfit Variable', 'Pretendard Variable', sans-serif;
   --display-weight: 250;
   --display-tracking: -0.02em;
-  --display-settings: normal;
+  --display-em-style: normal;
 }
-[data-type='c'] { /* 에디토리얼 세리프, 강조 단어(em)는 italic */
-  --font-display: 'Newsreader Variable', 'Pretendard Variable', serif;
-  --display-weight: 300;
-  --display-tracking: -0.025em;
-  --display-settings: normal;
-  --display-em-style: italic;
+[data-type='a'] { /* 소프트 세리프 */
+  --font-display: 'Fraunces Variable', 'Pretendard Variable', serif;
+  --display-tracking: -0.03em;
+  --display-settings: 'SOFT' 100, 'WONK' 0;
+  --display-em-style: normal;
 }
 *, *::before, *::after { box-sizing: border-box; }
 html { background: var(--bg); }
