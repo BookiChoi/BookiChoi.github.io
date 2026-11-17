@@ -1,6 +1,6 @@
 ---
-// 히어로 잉크 캔버스. #s0 안에 두면 섹션 전체를 덮는다(stage.css .hero-ink). 배경 위·이름(h1) 아래 레이어에 붓 획을 그린다.
-// 글자는 건드리지 않는다. JS가 꺼져 있거나 reduced-motion이면 빈 투명 캔버스로 남는다.
+// 히어로 잉크 캔버스(#s0 전체, stage.css .hero-ink). WebGL2로 배경 + 잉크 리빌 + 이름 글자(잉크 안은 흰색)를 그린다.
+// 준비되면 html.ink-on이 붙고 DOM h1은 투명 글자가 된다. JS 꺼짐, reduced-motion, WebGL2 없음이면 DOM 검정 이름 그대로.
 ---
 <canvas class="hero-ink" aria-hidden="true"></canvas>
 

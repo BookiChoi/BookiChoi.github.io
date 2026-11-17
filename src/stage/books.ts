@@ -1,6 +1,12 @@
 import {
   AmbientLight,
+  BoxGeometry,
+  BufferGeometry,
   DirectionalLight,
+  EdgesGeometry,
+  Float32BufferAttribute,
+  LineBasicMaterial,
+  LineSegments,
   Mesh,
   MeshStandardMaterial,
   PerspectiveCamera,
@@ -12,7 +18,7 @@ import {
   type Texture,
 } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { blankColor, isTodo, makeBlankCover, makeCover, makeSpine, shortName, themeOf, type BookData } from './covers';
+import { isTodo, makeCover, makeSpine, shortName, themeOf, type BookData } from './covers';
 import { DEBUG, debugLine } from './debug';
 import { PARAMS } from './params';
 
@@ -67,6 +73,10 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   const n = items.length + blanks;
   const spacing = opts.mobile ? P.spacingMobile : P.spacing;
   const restYaw = opts.mobile ? P.yawMobile : P.yaw;
+  const spread = opts.mobile ? P.spreadMobile : P.spread;
+  // 정면으로 도는 책의 z 하한: 책 두께 + 이웃 두께. 실제 값은 params(교차 검사로 정한 값)와 하한 중 큰 쪽
+  const zCenter = Math.max(P.centerPush, 2 * P.thickness[1]);
+  const zHover = Math.max(P.hoverPush, zCenter + 2 * P.thickness[1]);
   const ring = n * spacing; // 고리 한 바퀴 길이 L
   const half = ring / 2;
   const fadeLen = spacing * P.edgeFade; // 고리 끝에서 이 거리 동안 작아지며 가라앉는다
@@ -95,6 +105,18 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     return m;
   };
   const paper = mat('#d8d0bf'); // 책배와 위아래 면: 밝은 종이색(너무 하얗게 빛나지 않게 약간 낮춘 톤)
+  // 장식 책: 텍스처 없는 반투명 면 + 윤곽선(일반 상자의 12변 + 앞표지 책등 쪽 경첩선 1개). 뒤의 점 구름이 비친다
+  const G = PARAMS.ghost;
+  const ghost = new MeshStandardMaterial({ color: G.color, roughness: 0.5, transparent: true, opacity: G.opacity, depthWrite: false });
+  const lineMat = new LineBasicMaterial({ color: G.color, transparent: true, opacity: G.line, depthWrite: false });
+  const box = new BoxGeometry(P.size[0], P.size[1], P.size[2]);
+  const boxEdges = new EdgesGeometry(box); // 둥근 상자는 베벨마다 선이 생겨 일반 상자로 만든다
+  const [hw, hh, hd] = [P.size[0] / 2, P.size[1] / 2, P.size[2] / 2];
+  const edges = new BufferGeometry();
+  edges.setAttribute('position', new Float32BufferAttribute([...boxEdges.getAttribute('position').array, -hw + G.hinge, -hh, hd, -hw + G.hinge, hh, hd], 3));
+  box.dispose();
+  boxEdges.dispose();
+  disposables.push(ghost, lineMat);
 
   const meshes: Mesh[] = [];
   const real: Mesh[] = []; // 레이캐스트 대상(실제 책만)
@@ -109,8 +131,11 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       real.push(mesh);
       realIndex.push(i);
     } else {
-      // 장식 책: 글자 없는 추상 표지
-      mesh = new Mesh(geometry, [paper, mat(blankColor(i, 20)), paper, paper, mat('#ffffff', makeBlankCover(i)), mat(blankColor(i, 14))]);
+      mesh = new Mesh(geometry, ghost);
+      const outline = new LineSegments(edges, lineMat);
+      mesh.renderOrder = 1; // 투명 면 → 선 순서로 고정(깜빡임 방지)
+      outline.renderOrder = 2;
+      mesh.add(outline);
     }
     meshes.push(mesh);
     scene.add(mesh);
@@ -402,19 +427,20 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       let visible = false;
       for (let i = 0; i < n; i++) {
         const o = i * CH;
-        const bx = (baseX[i] = wrap((i - (n - 1) / 2) * spacing + offset));
+        const bx = wrap((i - (n - 1) / 2) * spacing + offset);
+        const sx = (baseX[i] = bx + spread * Math.tanh(bx / spacing)); // 화면 x: 가운데 주변을 벌린다
         // 목표값: 등장(아래에서 순서대로) + 포인터 파도 + 가운데 책 정면 + 호버/선택
         const t = ease(clamp01(p * (1 + P.stagger) - (P.stagger * i) / Math.max(1, n - 1)));
-        const wave = pointerOn && picked < 0 ? Math.exp(-((bx + cur[o + SHIFT] - pointerX) ** 2) / (P.waveRadius * P.waveRadius)) : 0;
+        const wave = pointerOn && picked < 0 ? Math.exp(-((sx + cur[o + SHIFT] - pointerX) ** 2) / (P.waveRadius * P.waveRadius)) : 0;
         const mid = Math.exp(-((bx / (spacing * 0.9)) ** 2)); // 가운데 슬롯에 가까울수록 1
         let tshift = 0;
         let ty = P.y - (1 - t) * P.rise + wave * P.waveLift - (1 - height[i]) * P.size[1] * 0.5;
-        let tz = P.centerPush * mid;
+        let tz = zCenter * mid;
         let tyaw = restYaw * (1 - P.centerTurn * mid) - wave * P.waveYaw;
         let ts = 1;
         if (pickedRow >= 0) {
           if (i === pickedRow) {
-            tshift = -bx; // 선택한 책만 화면 중앙으로
+            tshift = -sx; // 선택한 책만 화면 중앙으로
             ty = P.y + 0.1;
             tz = P.pickPush;
             tyaw = 0;
@@ -422,7 +448,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
           } else ty = P.y - P.rise;
         } else if (i === litRow) {
           ty += P.hoverLift;
-          tz = P.hoverPush;
+          tz = zHover;
           tyaw = P.hoverYaw;
         }
         // 스프링 적분 (값 5개)
@@ -436,7 +462,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         const s = cur[o + SCALE] * edge;
         const mesh = meshes[i];
         mesh.visible = s > 0.001;
-        mesh.position.set(bx + cur[o + SHIFT], cur[o + Y] - (1 - edge) * P.edgeSink, cur[o + Z]);
+        mesh.position.set(sx + cur[o + SHIFT], cur[o + Y] - (1 - edge) * P.edgeSink, cur[o + Z]);
         mesh.rotation.y = cur[o + YAW];
         mesh.scale.set(s, s * height[i], s * thick[i]);
         if (mesh.visible && cur[o + Y] > P.y - P.rise + 0.05) visible = true;
@@ -464,6 +490,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       document.documentElement.style.cursor = '';
       if (tip) tip.hidden = true;
       geometry.dispose();
+      edges.dispose();
       for (const d of disposables) d.dispose();
     },
   };

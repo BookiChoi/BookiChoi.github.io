@@ -17,8 +17,6 @@ type Ctx = CanvasRenderingContext2D;
 const W = 512;
 const H = 768;
 const SPINE_W = 128;
-const BLANK_W = 256;
-const BLANK_H = 384;
 
 /** 아직 확정되지 않은 값("TODO: 내 확인 필요")은 표지와 툴팁에 그리지 않는다 */
 export const isTodo = (s: string) => s.trimStart().startsWith('TODO');
@@ -289,51 +287,5 @@ export function makeSpine(book: BookData, fonts: Fonts): CanvasTexture {
   x.font = `400 26px ${fonts.mono}`;
   x.textAlign = 'center';
   x.fillText(orderLabel(book.order), SPINE_W / 2, H - 62);
-  return texture(canvas);
-}
-
-/** 장식 책: 글자 없는 추상 표지(줄무늬, 점, 격자, 물결). 책등은 blankColor를 단색으로 쓴다 */
-export const blankColor = (i: number, light = 26) => `hsl(${(210 + i * 47) % 360} 18% ${light}%)`;
-export function makeBlankCover(i: number): CanvasTexture {
-  const [canvas, x] = sheet(BLANK_W, BLANK_H);
-  gradient(x, blankColor(i, 30), blankColor(i, 17), BLANK_W, BLANK_H);
-  x.strokeStyle = x.fillStyle = blankColor(i, 52);
-  x.globalAlpha = 0.55;
-  const style = i % 4;
-  if (style === 0) {
-    x.lineWidth = 6; // 줄무늬
-    for (let y = 30; y < BLANK_H; y += 22) {
-      x.beginPath();
-      x.moveTo(0, y);
-      x.lineTo(BLANK_W, y);
-      x.stroke();
-    }
-  } else if (style === 1) {
-    for (let y = 18; y < BLANK_H; y += 26) {
-      for (let px = 18 + ((y / 26) % 2) * 13; px < BLANK_W; px += 26) {
-        x.beginPath();
-        x.arc(px, y, 4, 0, Math.PI * 2); // 점
-        x.fill();
-      }
-    }
-  } else if (style === 2) {
-    x.lineWidth = 2; // 격자
-    for (let p = 0; p < Math.max(BLANK_W, BLANK_H); p += 32) {
-      x.beginPath();
-      x.moveTo(p, 0);
-      x.lineTo(p, BLANK_H);
-      x.moveTo(0, p);
-      x.lineTo(BLANK_W, p);
-      x.stroke();
-    }
-  } else {
-    x.lineWidth = 4; // 물결
-    for (let y = 20; y < BLANK_H + 20; y += 28) {
-      x.beginPath();
-      for (let px = 0; px <= BLANK_W; px += 8) x.lineTo(px, y + Math.sin(px / 22 + y) * 7);
-      x.stroke();
-    }
-  }
-  x.globalAlpha = 1;
   return texture(canvas);
 }

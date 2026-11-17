@@ -56,6 +56,7 @@ export const PARAMS = {
 
   // 3D 책 줄 (S5). 길이 단위는 책 scene의 월드 유닛
   blankBooks: 8, // 캐러셀 고리에 섞는 장식용 빈 책 수. 0이면 실제 프로젝트 책만
+  ghost: { color: '#e6edf7', opacity: 0.14, line: 0.3, hinge: 0.08 }, // 장식 책: 반투명 면, 윤곽선 불투명도, 경첩선의 책등 쪽 거리
   books: {
     size: [1, 1.5, 0.2], // 폭, 높이, 두께(기준)
     radius: 0.02, // 모서리 둥글기
@@ -72,7 +73,9 @@ export const PARAMS = {
     blankMobile: 4, // 모바일 장식 책 상한(루프가 보이게)
     mobileVisible: 3.3, // 모바일에서 화면 폭에 들어오는 책 수
     centerTurn: 0.55, // 가운데 슬롯 책이 정면 쪽으로 도는 비율(표지가 읽히게)
-    centerPush: 0.35, // 가운데 슬롯 책이 앞으로 나오는 거리
+    centerPush: 0.52, // 가운데 슬롯 책이 앞으로 나오는 거리(하한: 책 두께 + 이웃 두께 = 2 × 최대 두께)
+    spread: 0.8, // 가운데 주변 가로 벌림: x = bx + spread × tanh(bx / spacing). 앞으로 나온 책이 비스듬한 이웃과 교차하지 않게
+    spreadMobile: 0.6,
     edgeFade: 1.4, // 고리 끝에서 작아지며 사라지는 구간(책 간격 배수)
     edgeSink: 0.9, // 사라지며 가라앉는 깊이
     drift: 0.12, // 자동 드리프트 속도(월드/초)
@@ -86,7 +89,7 @@ export const PARAMS = {
     waveLift: 0.2,
     waveYaw: 0.18,
     hoverLift: 0.22, // 호버한 책: 들림, 카메라 쪽으로 나옴, 정면에 가깝게 회전
-    hoverPush: 1.1,
+    hoverPush: 1.1, // 하한: 가운데 책 z + 2 × 최대 두께
     hoverYaw: 0.14,
     pickPush: 3.2, // 클릭 전환: 화면 중앙으로 나오며 커진다
     pickScale: 1.35,
