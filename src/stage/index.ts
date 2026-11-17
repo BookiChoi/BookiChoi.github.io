@@ -8,6 +8,7 @@ import {
   WebGLRenderer,
   type TextureDataType,
 } from 'three';
+import { createBooks, type Books } from './books';
 import { createDebug } from './debug';
 import { PARAMS } from './params';
 import { createParticles, type Blend, type Particles } from './particles';
@@ -50,22 +51,23 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     dispatchEvent(new Event('stage:ready'));
   };
   const fail = () => {
-    root.classList.remove('stage-ready');
+    root.classList.remove('stage-ready', 'books-on'); // books-on이 빠지면 프로젝트 링크 목록이 다시 보인다
     root.classList.add('no-webgl');
     report();
   };
 
+  const mobile = isMobile();
   let renderer: WebGLRenderer;
   try {
-    // three는 WebGL2 전용이라 컨텍스트를 못 만들면 여기서 throw한다
-    renderer = new WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' });
+    // three는 WebGL2 전용이라 컨텍스트를 못 만들면 여기서 throw한다.
+    // 안티에일리어싱은 책 모서리용. 모바일은 DPR이 높아 계단이 덜 보이므로 끈다
+    renderer = new WebGLRenderer({ canvas, antialias: !mobile, alpha: false, powerPreference: 'high-performance' });
   } catch {
     fail();
     return;
   }
   info.webgl2 = true;
 
-  const mobile = isMobile();
   const touch = matchMedia('(pointer: coarse)').matches;
   const cap = dprCap(mobile);
   let tier = initialTier(mobile);
@@ -90,10 +92,21 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   info.tex = type === FloatType ? 'Float' : 'HalfFloat';
   info.tier = tier;
   renderer.setClearColor(color('--bg'));
+  renderer.autoClear = false; // pass 2개(점 → 책)를 직접 지우고 그린다
 
   const scene = new Scene();
   scene.add(particles.points);
   const camera = new PerspectiveCamera(PARAMS.fov, 1, 0.1, 100);
+  let books: Books | null = null;
+  // pass 1: 점 구름. pass 2: 책(깊이만 지우고 그 위에). 책이 화면에 없으면 pass 2는 건너뛴다
+  const draw = (withBooks: boolean) => {
+    renderer.clear();
+    renderer.render(scene, camera);
+    if (books && withBooks) {
+      renderer.clearDepth();
+      renderer.render(books.scene, books.camera);
+    }
+  };
   const tanHalf = Math.tan((PARAMS.fov * Math.PI) / 360);
   const keys = PARAMS.cameraKeys;
   const shapes = PARAMS.sectionShapes;
@@ -149,14 +162,15 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     renderer.setSize(innerWidth, innerHeight, false);
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
-    // 세로 화면에서도 링 전체가 들어오게 카메라를 뒤로 뺀다
-    fit = Math.max(1, (PARAMS.ring.radius * PARAMS.fitMargin) / (tanHalf * camera.aspect) / keys[0].pos[2]);
+    // 세로 화면에서도 도형 전체가 들어오게 카메라를 뒤로 뺀다
+    fit = Math.max(1, (PARAMS.ring.radius * PARAMS.fitMargin) / (tanHalf * camera.aspect) / PARAMS.fitDistance);
     wide = Math.min(1, Math.max(0, (camera.aspect - 1) / 0.6));
     particles.setScale(canvas.height / (2 * tanHalf));
+    books?.resize(camera.aspect);
     scroll.measure();
     if (reduced) {
       aim();
-      renderer.render(scene, camera);
+      draw(false);
     }
   };
 
@@ -218,7 +232,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     }
 
     particles.step(dt, time, pointer, blend);
-    renderer.render(scene, camera);
+    draw(books ? books.update(dt, scroll.sec) : false);
     if (!ready) {
       ready = true;
       markReady();
@@ -250,6 +264,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   const destroy = () => {
     stop();
     ac.abort();
+    books?.dispose();
     particles.dispose();
     renderer.dispose();
   };
@@ -281,7 +296,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     // 시간은 입장 구간 뒤로 넘겨 평소 스프링 값으로 돌린다
     const t0 = PARAMS.introDuration + 1;
     for (let i = 0; i < STATIC_STEPS; i++) particles.step(1 / 30, t0 + i / 30, pointer, blend);
-    renderer.render(scene, camera);
+    draw(false);
     markReady();
     report();
     return destroy;
@@ -312,5 +327,16 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     { signal },
   );
   if (!document.hidden) start();
+
+  // 3D 책: 표지 폰트가 로드된 뒤 준비된다. 준비되면 books-on으로 HTML 목록을 시각적으로만 숨긴다
+  createBooks({ mobile: mobile || touch, accent: colors.b, signal })
+    .then((created) => {
+      if (!created) return;
+      if (signal.aborted) return created.dispose();
+      books = created;
+      books.resize(camera.aspect);
+      root.classList.add('books-on');
+    })
+    .catch(() => {}); // 책 생성 실패: 목록이 그대로 보인다
   return destroy;
 }

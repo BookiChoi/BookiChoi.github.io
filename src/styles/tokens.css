@@ -5,6 +5,9 @@
   --text-secondary: #9a9aa6;
   --accent: #7c9cff;
   --insight: #ffd76a; /* 인사이트 순간에만 쓰는 따뜻한 강조색 */
+  /* 첫 화면(S0) 전용. 이 둘만 바꾸면 어두운 버전으로 뒤집을 수 있다 */
+  --hero-bg: #efeeea;
+  --hero-fg: #0a0a0a;
   --border: rgba(255, 255, 255, 0.08);
   --font-body: 'Pretendard Variable', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;

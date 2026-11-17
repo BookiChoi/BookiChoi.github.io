@@ -32,6 +32,17 @@ const sections = [
   { id: 's4', label: t.s4Label },
   { id: 's5', label: t.projects },
 ];
+// 3D 책(books.ts)이 읽는 데이터. HTML 안 JSON이라 '<'는 이스케이프한다
+const books = JSON.stringify(
+  items.map((p) => ({
+    slug: p.id.split('/')[0],
+    title: p.data.title,
+    summary: p.data.summary,
+    hue: p.data.coverHue,
+    order: p.data.order,
+    href: `/${lang}/projects/${p.id.split('/')[0]}/`,
+  })),
+).replace(/</g, '\\u003c');
 ---
 <Base lang={lang} path="/" description={t.intro}>
   <Stage />
@@ -42,7 +53,6 @@ const sections = [
   <SectionNav label={t.sections} items={sections} />
   <main id="main" class="stage-main" data-snap>
     <section id="s0" class="snap screen s0">
-      <NameInk>
       <h1 class="hero-name display" aria-label={SITE_NAME}>
         {words.map((w, wi) => {
           const Word = wi === words.length - 1 ? 'em' : 'span';
@@ -51,7 +61,7 @@ const sections = [
           );
         })}
       </h1>
-      </NameInk>
+      <NameInk />
       <p class="scroll-hint label" aria-hidden="true">{t.scroll}<span class="scroll-line"></span></p>
     </section>
     <section id="s1" class="snap screen">
@@ -90,6 +100,12 @@ const sections = [
             </li>
           ))}
         </ul>
+      </div>
+      <script type="application/json" id="books-data" set:html={books} />
+      <div id="book-tip" class="book-tip" aria-hidden="true" hidden>
+        <strong></strong>
+        <p></p>
+        <span class="label">{t.open} →</span>
       </div>
     </section>
   </main>

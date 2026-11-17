@@ -25,11 +25,42 @@ export const PARAMS = {
   bulb: { radius: 1.05, y: 0.55, cut: 0.81, neck: 0.55, baseRadius: 0.42, baseHeight: 0.55, turns: 4, glass: 0.6, filamentWidth: 0.56, coils: 5, filamentGlow: 1.8 },
   band: { width: 11, amp: 0.45, thickness: 0.5, depth: 1.2, freq: 0.9, speed: 0.3 },
 
-  sectionShapes: [0, 1, 2, 3, 4, 5], // 섹션 s0..s5가 쓰는 shape id. 이웃한 두 섹션 사이를 sec로 보간한다
-  sectionNoise: [1, 0.25, 0.7, 0.25, 0.3, 1], // 섹션별 noiseAmp 배율. 직선이 읽혀야 하는 도형(건물, 막대, 전구)은 낮게
+  // 섹션 s0..s5가 쓰는 shape id. 이웃한 두 섹션 사이를 sec로 보간한다.
+  // s0은 밝은 히어로에 가려져 있어서 s1과 같은 building을 쓴다(스크롤하면 이미 완성된 건물이 보인다). ring(0)은 현재 쓰지 않는다
+  sectionShapes: [1, 1, 2, 3, 4, 5],
+  sectionNoise: [0.25, 0.25, 0.7, 0.25, 0.3, 1], // 섹션별 noiseAmp 배율. 직선이 읽혀야 하는 도형(건물, 막대, 전구)은 낮게
   insightSection: 4, // 이 섹션 근처에서만 점 색이 --insight로 바뀐다
   dimAtProjects: 0.8, // 마지막 섹션(프로젝트)에서 점의 알파 배율. 크기에는 제곱근을 곱한다
   outline: { 512: 0.18, 256: 0.28, 128: 0.45 }, // building과 bars에서 윤곽선에 쓰는 점 비율. 점이 적은 tier일수록 윤곽 위주
+
+  // 3D 책 줄 (S5). 길이 단위는 책 scene의 월드 유닛
+  blankBooks: 8, // 양옆 장식용 빈 책 수(모바일은 0). 0이면 실제 프로젝트 책만
+  books: {
+    size: [1, 1.5, 0.2], // 폭, 높이, 두께
+    appear: [4.2, 5], // 이 sec 구간에서 아래에서 올라온다
+    stagger: 0.6, // 등장 순서 차이(0이면 동시에)
+    rise: 4.5, // 등장 전 숨는 깊이(아래쪽)
+    y: -0.25, // 줄의 세로 위치
+    spacing: 0.52, // 책 사이 간격
+    spacingMobile: 0.95,
+    yaw: 0.96, // 기본 자세: 책장을 비스듬히 본 각도(rad, 약 55°). 책등과 표지 일부가 보인다
+    yawMobile: 0.45, // 모바일은 표지가 더 보이게
+    spring: 70, // 책 스프링 강도
+    damping: 12,
+    waveRadius: 1.1, // 포인터 파도의 폭
+    waveLift: 0.2,
+    waveYaw: 0.18,
+    hoverLift: 0.22, // 호버한 책: 들림, 카메라 쪽으로 나옴, 정면에 가깝게 회전
+    hoverPush: 1.1,
+    hoverYaw: 0.14,
+    pickPush: 3.2, // 클릭 전환: 화면 중앙으로 나오며 커진다
+    pickScale: 1.35,
+    pickMs: 600,
+    fov: 32, // 책 전용 카메라
+    distance: 6.6, // 최소 카메라 거리. 줄이 화면 폭을 넘으면 더 물러난다
+    cameraY: 0.75,
+    fitMargin: 1.08,
+  },
 
   // 입장 연출 시작 위치
   scatterMin: 3, // 화면 가장자리 근처라 첫 프레임부터 점이 보인다
@@ -46,15 +77,16 @@ export const PARAMS = {
   // shift: 가로가 넓은 화면에서 도형을 오른쪽으로 옮기는 거리(글이 왼쪽에 있어서). drift: 느린 좌우 이동 폭
   fov: 45,
   cameraKeys: [
-    { pos: [0, 0, 5], look: [0, 0, 0], shift: 0, drift: 0 },
+    { pos: [-0.6, 1.1, 6.6], look: [0, 0, 0], shift: 1.9, drift: 0.5 }, // s0: 가려진 동안. s1로 가며 카메라만 다가간다
     { pos: [1.3, 0.35, 5.6], look: [0, 0, 0], shift: 1.9, drift: 0.5 }, // building: 약간 비스듬히, 천천히
     { pos: [0, 0, 5.2], look: [0, 0, 0], shift: 0.6, drift: 0 },
     { pos: [0.4, 0.2, 5.4], look: [0, 0, 0], shift: 1.3, drift: 0 },
     { pos: [0, 0.5, 5], look: [0, 0.05, 0], shift: 1.5, drift: 0 },
-    { pos: [0, 0, 5], look: [0, 0, 0], shift: 0, drift: 0 },
+    { pos: [0, -0.95, 5], look: [0, -0.95, 0], shift: 0, drift: 0 }, // s5: 띠가 책 줄 위쪽(책 뒤와 그 위)을 지나게 시선을 내린다
   ],
   driftSpeed: 0.15, // drift의 각속도(rad/s)
-  fitMargin: 1.3, // 좁은 화면에서 링이 잘리지 않게 뒤로 물러나는 여유
+  fitDistance: 5, // 좁은 화면 보정의 기준 카메라 거리
+  fitMargin: 1.3, // 좁은 화면에서 도형이 잘리지 않게 뒤로 물러나는 여유
   gaze: 0.25, // 포인터에 따른 시선 이동량
 };
 
