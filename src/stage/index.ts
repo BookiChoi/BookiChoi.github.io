@@ -9,12 +9,11 @@ import {
   type TextureDataType,
 } from 'three';
 import { createDebug } from './debug';
-import { PARAMS, createParticles, type Particles } from './particles';
+import { PARAMS } from './params';
+import { createParticles, type Blend, type Particles } from './particles';
 import { createScroll } from './scroll';
-import { createFpsMeter, dprCap, initialTier, isMobile, lowerTier, saveTier } from './tiers';
+import { createDownshiftGate, createFpsMeter, dprCap, initialTier, isMobile, lowerTier, saveTier } from './tiers';
 
-const MIN_FPS = 45;
-const CHECK_MS = 2000;
 const WARMUP = 10; // 셰이더 컴파일이 끼는 첫 프레임들은 FPS 평균에서 뺀다
 const STATIC_STEPS = 30; // reduced-motion에서 정적 한 장을 만들 시뮬 스텝 수
 
@@ -71,7 +70,8 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   const cap = dprCap(mobile);
   let tier = initialTier(mobile);
   const css = getComputedStyle(root);
-  const colors = { a: css.getPropertyValue('--text').trim(), b: css.getPropertyValue('--accent').trim() };
+  const color = (name: string) => css.getPropertyValue(name).trim();
+  const colors = { a: color('--text'), b: color('--accent'), c: color('--insight') };
 
   const type = pickFloatType(renderer);
   if (!type) {
@@ -89,7 +89,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   }
   info.tex = type === FloatType ? 'Float' : 'HalfFloat';
   info.tier = tier;
-  renderer.setClearColor(css.getPropertyValue('--bg').trim());
+  renderer.setClearColor(color('--bg'));
 
   const scene = new Scene();
   scene.add(particles.points);
@@ -99,22 +99,24 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   const shapes = PARAMS.sectionShapes;
   const lastPair = keys.length - 2; // 마지막 보간 구간의 시작 섹션
   let fit = 1; // 좁은 화면에서 카메라를 뒤로 빼는 배율
+  let wide = 1; // 가로가 넓을수록 1: 도형을 오른쪽으로 옮기는 정도
+  let time = 0;
   const scroll = createScroll(); // reduced-motion에서는 update를 부르지 않아 0에 머문다
   // 현재 섹션 쌍과 보간값: shape와 카메라가 같은 값을 쓴다
-  const blend = { i: 0, mix: 0, dim: 1 };
+  const blend: Blend & { i: number } = { i: 0, a: shapes[0], b: shapes[1], mix: 0, dim: 1, insight: 0, noise: 1 };
   const setBlend = (sec: number) => {
     const i = Math.min(Math.floor(sec), lastPair);
     const f = Math.min(1, Math.max(0, sec - i));
     blend.i = i;
-    blend.mix = f * f * (3 - 2 * f);
+    blend.a = info.shapeA = shapes[i];
+    blend.b = info.shapeB = shapes[i + 1];
+    blend.mix = info.mix = f * f * (3 - 2 * f);
     blend.dim = 1 + (PARAMS.dimAtProjects - 1) * Math.min(1, Math.max(0, sec - lastPair));
-    info.shapeA = shapes[i];
-    info.shapeB = shapes[i + 1];
-    info.mix = blend.mix;
+    blend.insight = Math.max(0, 1 - Math.abs(sec - PARAMS.insightSection));
+    const n = PARAMS.sectionNoise;
+    blend.noise = n[i] + (n[i + 1] - n[i]) * blend.mix;
   };
   setBlend(0);
-  const step = (dt: number, t: number) =>
-    particles.step(dt, t, shapes[blend.i], shapes[blend.i + 1], blend.mix, blend.dim, pointer);
 
   // 포인터 상태는 전부 미리 만들어 두고 프레임에서 재사용한다
   const ndc = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -126,13 +128,16 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     const a = keys[blend.i];
     const b = keys[blend.i + 1];
     const m = blend.mix;
+    // 카메라와 시선을 같이 왼쪽으로 옮기면 도형이 화면 오른쪽에 온다
+    const shift = (a.shift + (b.shift - a.shift) * m) * wide;
+    const drift = (a.drift + (b.drift - a.drift) * m) * Math.sin(time * PARAMS.driftSpeed);
     camera.position.set(
-      (a.pos[0] + (b.pos[0] - a.pos[0]) * m) * fit + ndc.x * PARAMS.gaze,
+      (a.pos[0] + (b.pos[0] - a.pos[0]) * m) * fit - shift + drift + ndc.x * PARAMS.gaze,
       (a.pos[1] + (b.pos[1] - a.pos[1]) * m) * fit + ndc.y * PARAMS.gaze,
       (a.pos[2] + (b.pos[2] - a.pos[2]) * m) * fit,
     );
     camera.lookAt(
-      a.look[0] + (b.look[0] - a.look[0]) * m,
+      a.look[0] + (b.look[0] - a.look[0]) * m - shift,
       a.look[1] + (b.look[1] - a.look[1]) * m,
       a.look[2] + (b.look[2] - a.look[2]) * m,
     );
@@ -145,7 +150,8 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     // 세로 화면에서도 링 전체가 들어오게 카메라를 뒤로 뺀다
-    fit = Math.max(1, (PARAMS.ringRadius * PARAMS.fitMargin) / (tanHalf * camera.aspect) / keys[0].pos[2]);
+    fit = Math.max(1, (PARAMS.ring.radius * PARAMS.fitMargin) / (tanHalf * camera.aspect) / keys[0].pos[2]);
+    wide = Math.min(1, Math.max(0, (camera.aspect - 1) / 0.6));
     particles.setScale(canvas.height / (2 * tanHalf));
     scroll.measure();
     if (reduced) {
@@ -154,9 +160,9 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     }
   };
 
-  const meter = createFpsMeter();
+  const meter = createFpsMeter(); // 디버그 표시용 이동평균
+  const gate = createDownshiftGate(); // tier 하향 판정
   let warmup = WARMUP;
-  let nextCheck = 0;
   let nextReport = 0;
 
   const downshift = () => {
@@ -175,12 +181,12 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     tier = info.tier = next;
     saveTier(next);
     meter.reset();
+    gate.restart();
     warmup = WARMUP;
   };
 
   let raf = 0;
   let last = 0;
-  let time = 0;
   let ready = false;
 
   const frame = (now: number) => {
@@ -211,7 +217,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
       pointer.set(0, 0, 1e3);
     }
 
-    step(dt, time);
+    particles.step(dt, time, pointer, blend);
     renderer.render(scene, camera);
     if (!ready) {
       ready = true;
@@ -219,10 +225,9 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     }
 
     if (warmup > 0) warmup--;
-    else meter.push(raw);
-    if (meter.count >= 60 && now >= nextCheck) {
-      nextCheck = now + CHECK_MS;
-      if (meter.fps < MIN_FPS) downshift();
+    else {
+      meter.push(raw);
+      if (gate.frame(raw * 1000)) downshift();
     }
     if (debug && now >= nextReport) {
       nextReport = now + 250;
@@ -275,7 +280,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     // 정적 한 장: origin에서 시작해 몇 스텝만 돌리고 멈춘다. 스크롤/포인터/루프 없음.
     // 시간은 입장 구간 뒤로 넘겨 평소 스프링 값으로 돌린다
     const t0 = PARAMS.introDuration + 1;
-    for (let i = 0; i < STATIC_STEPS; i++) step(1 / 30, t0 + i / 30);
+    for (let i = 0; i < STATIC_STEPS; i++) particles.step(1 / 30, t0 + i / 30, pointer, blend);
     renderer.render(scene, camera);
     markReady();
     report();
@@ -297,7 +302,15 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   const ro = new ResizeObserver(() => scroll.measure()); // 폰트 로드 등으로 높이가 바뀔 때
   ro.observe(document.body);
   signal.addEventListener('abort', () => ro.disconnect());
-  document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()), { signal });
+  document.addEventListener(
+    'visibilitychange',
+    () => {
+      if (document.hidden) return stop();
+      gate.restart(); // 복귀 직후 첫 윈도우는 tier 판정에서 뺀다
+      start();
+    },
+    { signal },
+  );
   if (!document.hidden) start();
   return destroy;
 }

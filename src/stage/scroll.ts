@@ -1,4 +1,4 @@
-const IDS = ['s0', 's1', 's2', 's3', 's4'];
+const IDS = ['s0', 's1', 's2', 's3', 's4', 's5'];
 const LAST = IDS.length - 1;
 const SMOOTH = 8; // 클수록 스크롤을 빨리 따라간다 (1/s)
 
@@ -8,7 +8,7 @@ const follow = (v: number, target: number, k: number) => (Math.abs(target - v) <
 
 /**
  * 네이티브 스크롤(스냅 포함)을 rAF에서 읽어 부드럽게 한 진행도.
- * --sec: 연속 섹션 인덱스 0..4. 섹션 i의 top에서 i, 다음 섹션 top까지 선형. 마지막 섹션 안에서는 4.
+ * --sec: 연속 섹션 인덱스 0..5. 섹션 i의 top에서 i, 다음 섹션 top까지 선형. 마지막 섹션 안에서는 5.
  * --p: 문서 전체 0..1.
  * --p-sN: 섹션 N의 가시 정도 = clamp(1 - |sec - N|). 화면에 딱 맞으면 1, 한 섹션 떨어지면 0.
  * 스테이지 루프가 돌 때만 갱신된다(reduced-motion / no-webgl에서는 값이 없다).

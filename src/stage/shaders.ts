@@ -1,73 +1,164 @@
-// shape: seed(0..1 vec3) → vec4(월드 좌표 xyz, 가시도 w). 배열에 항목을 추가하면 shapeOrigin 분기가 자동으로 생긴다.
-// 배열 인덱스가 shape id (uShapeA / uShapeB 유니폼 값). 섹션별 배정은 PARAMS.sectionShapes.
+import { SHAPE_DIMS } from './params';
+
+// --- 점 분배 비율: 각 shape 안에서 부위별로 점을 몇 %씩 쓰는지. 여기만 고치면 된다 ---
+// 남는 비율은 주된 면으로 간다(building 정면, bars 막대 면, bulb 유리구).
+const RATIOS = /* glsl */ `
+const float BUILDING_SIDE = 0.12; // 옆면. 윤곽선은 uOutline(tier별, PARAMS.outline), 나머지가 정면
+const float BARS_TREND = 0.10;    // 추세선. 막대 윤곽(윗변, 양옆)은 uOutline, 나머지가 막대 면
+const float BULB_FILAMENT = 0.10; // 필라멘트(코일 70%, 지지선 30%). 과노출되면 낮춘다
+const float BULB_NECK = 0.12;     // 목
+const float BULB_BASE = 0.13;     // 나사 base. 나머지(약 0.65)가 유리구
+`;
+
+// PARAMS의 shape 치수를 GLSL 상수로 굽는다: { building: { depth: 0.6 } } → const float building_depth = 0.6000;
+const f = (n: number) => n.toFixed(4);
+const dims = Object.entries(SHAPE_DIMS)
+  .flatMap(([shape, values]) =>
+    Object.entries(values).map(([key, v]) =>
+      typeof v === 'number'
+        ? `const float ${shape}_${key} = ${f(v)};`
+        : `const vec3 ${shape}_${key} = vec3(${v.map(f).join(', ')});`,
+    ),
+  )
+  .join('\n');
+
+// shape: 점마다 고정된 난수 s, r(각 0..1 vec3) → vec4(월드 좌표 xyz, w).
+// w는 0..1이면 가시도(알파 배율), 1보다 크면 강조(알파 1 + 점 확대 + insight 색).
+// 배열에 항목을 추가하면 shapeOrigin 분기가 자동으로 생긴다. 배열 인덱스가 shape id이고, 섹션별 배정은 PARAMS.sectionShapes.
 export const SHAPES = [
   {
     name: 'ring',
     glsl: /* glsl */ `
-vec4 shape_ring(vec3 s) {
+vec4 shape_ring(vec3 s, vec3 r) {
   float a = s.x * 6.2831853;
   float t = s.y * 2.0 - 1.0;
-  float r = uRing.x + t * abs(t) * uRing.y * 0.5; // 가운데가 더 촘촘
-  return vec4(cos(a) * r, sin(a) * r, (s.z - 0.5) * uRing.z, 1.0);
+  float rad = ring_radius + t * abs(t) * ring_thickness * 0.5; // 가운데가 더 촘촘
+  return vec4(cos(a) * rad, sin(a) * rad, (s.z - 0.5) * ring_depth, 1.0);
 }`,
   },
   {
-    name: 'sphere',
+    // 가운데가 가장 높은 타워 3개: 정면 파사드(창문 격자) + 옆면 + 윤곽선
+    name: 'building',
     glsl: /* glsl */ `
-vec4 shape_sphere(vec3 s) {
-  float a = s.x * 6.2831853;
-  float z = 1.0 - 2.0 * s.y;
-  float r = sqrt(max(0.0, 1.0 - z * z));
-  return vec4(vec3(cos(a) * r, sin(a) * r, z) * uSphere.x * (1.0 + (s.z - 0.5) * uSphere.y), 1.0);
+vec4 shape_building(vec3 s, vec3 r) {
+  vec3 area = building_w * building_h; // 타워는 정면 면적에 비례해 고른다
+  float pick = s.x * (area.x + area.y + area.z);
+  int k = pick < area.x ? 0 : (pick < area.x + area.y ? 1 : 2);
+  float w = building_w[k];
+  float h = building_h[k];
+  float left = building_x[k] - 0.5 * w;
+  float right = left + w;
+  float front = 0.5 * building_depth;
+  float y = building_base + r.y * h;
+  float top = building_base + h;
+  if (s.y < uOutline) {
+    // 윤곽선: 지붕선(정면, 옆면)과 세로 모서리 3개
+    float e = s.y / uOutline;
+    if (e < 0.35) return vec4(left + r.x * w, top, front, 1.0);
+    if (e < 0.5) return vec4(right, top, front - r.x * building_depth, 1.0);
+    if (e < 0.68) return vec4(left, y, front, 1.0);
+    if (e < 0.86) return vec4(right, y, front, 1.0);
+    return vec4(right, y, -front, 1.0);
+  }
+  if (s.y < uOutline + BUILDING_SIDE) return vec4(right, y, front - r.x * building_depth, building_wall);
+  // 정면: 창문 격자에서 켜진 창 안의 점만 밝다
+  vec2 n = max(vec2(1.0), floor(vec2(w, h) / building_cell));
+  vec2 g = r.xy * n;
+  vec2 c = floor(g);
+  vec2 q = fract(g);
+  float lit = step(1.0 - building_lit, fract(sin(dot(c + float(k) * 17.0, vec2(127.1, 311.7))) * 43758.5453));
+  float inWindow = step(0.2, q.x) * step(q.x, 0.8) * step(0.25, q.y) * step(q.y, 0.8);
+  return vec4(left + r.x * w, y, front, mix(building_wall, 1.0, lit * inWindow));
 }`,
   },
   {
-    // xz 평면의 격자선 + sin파 합으로 된 높이(차트/지형)
-    name: 'dataSurface',
+    // 왼쪽에서 오른쪽으로 흐르는 점 스트림이 한 점으로 모이는 깔때기. 래핑 직후 돌아가는 동안은 가시도 0
+    name: 'dataFlow',
     glsl: /* glsl */ `
-vec4 shape_dataSurface(vec3 s) {
-  vec2 uv = s.xz;
-  vec2 n = vec2(uSurface.w, max(1.0, floor(uSurface.w * uSurface.y / uSurface.x)));
-  vec2 q = (floor(uv * n) + 0.5) / n;
-  uv = s.y < 0.5 ? vec2(q.x, uv.y) : vec2(uv.x, q.y); // 절반은 x를, 절반은 z를 선으로 양자화
-  float x = (uv.x - 0.5) * uSurface.x;
-  float z = (uv.y - 0.5) * uSurface.y;
-  float f = uSurfaceWave.x;
-  float w = uTime * uSurfaceWave.y;
-  float y = uSurfaceWave.z + uSurface.z * (sin(f * x + w) + 0.6 * sin(1.7 * f * z - 0.8 * w) + 0.4 * sin(0.9 * f * (x + z) + 1.3 * w));
-  return vec4(x, y, z, 1.0);
+vec4 shape_dataFlow(vec3 s, vec3 r) {
+  float j = floor(s.x * dataFlow_count);
+  float h = fract(sin(j * 91.7 + 1.3) * 43758.5453); // 줄마다 고정된 난수
+  float speed = mix(dataFlow_speedMin, dataFlow_speedMax, r.x);
+  float phase = fract(s.y + uTime * speed);
+  float open = 1.0 - smoothstep(0.0, 1.0, phase); // 1 → 0: 오른쪽으로 갈수록 모인다
+  float y0 = ((j + 0.5) / dataFlow_count - 0.5) * dataFlow_spread;
+  float x = mix(dataFlow_x0, dataFlow_x1, phase);
+  float y = (y0 + dataFlow_wave * sin(phase * 9.0 + j * 1.7 + uTime * 0.6)) * open
+    + (r.y - 0.5) * dataFlow_thickness * (0.4 + 0.6 * open);
+  float z = (h - 0.5) * dataFlow_depth * open + (r.z - 0.5) * dataFlow_thickness;
+  float vis = smoothstep(dataFlow_hide, dataFlow_hide + 1.0, phase / speed) * (1.0 - smoothstep(0.92, 1.0, phase));
+  return vec4(x, y, z, vis);
 }`,
   },
   {
-    // 세로 기둥을 따라 위로 흐르다 위에서 래핑. 래핑 직후 아래로 돌아가는 동안은 가시도 0.
-    name: 'risingStreams',
+    // 점으로 된 막대(장식용 오름세)와 그 위를 지나는 추세선
+    name: 'bars',
     glsl: /* glsl */ `
-vec4 shape_risingStreams(vec3 s) {
-  float n = uStreams.x;
-  float c = floor(s.x * n);
-  float j = fract(s.x * n) * 2.0 - 1.0;
-  float h = fract(sin(c * 127.1 + 3.7) * 43758.5453); // 열마다 고정된 난수
-  float x = ((c + 0.5) / n - 0.5) * uStreams.y + j * abs(j) * uStreamFlow.x;
-  float z = (h - 0.5) * uStreams.w + (fract(s.z * 13.0) - 0.5) * uStreamFlow.x;
-  float speed = mix(uStreamFlow.y, uStreamFlow.z, s.z);
-  float phase = fract(s.y + h + uTime * speed);
-  float sinceWrap = phase / speed; // 래핑 뒤 지난 시간(초)
-  float vis = smoothstep(uStreamFlow.w, uStreamFlow.w + 1.0, sinceWrap) * (1.0 - smoothstep(0.85, 0.97, phase));
-  return vec4(x, (phase - 0.5) * uStreams.z, z, vis);
+vec4 shape_bars(vec3 s, vec3 r) {
+  float left = -0.5 * bars_width;
+  if (s.y < BARS_TREND) {
+    float y = bars_base + bars_height * (0.3 + 0.7 * r.x) + bars_trendLift + 0.06 * bars_height * sin(r.x * 5.0);
+    return vec4(left + r.x * bars_width, y, 0.5 * bars_depth, 1.0);
+  }
+  float j = floor(s.x * bars_count);
+  float h = bars_height * (0.3 + 0.7 * j / (bars_count - 1.0)) + 0.1 * bars_height * sin(j * 2.4);
+  float z = (r.z - 0.5) * bars_depth;
+  float u = r.x;
+  float v = r.y;
+  float vis = bars_fill;
+  if (s.y < BARS_TREND + uOutline) {
+    // 막대 윤곽: 윗변 40%, 양옆 60%
+    if (s.z < 0.4) v = 1.0;
+    else u = step(0.7, s.z);
+    vis = 1.0;
+  }
+  float x = left + ((j + 0.5) + (u - 0.5) * (1.0 - bars_gap)) / bars_count * bars_width;
+  return vec4(x, bars_base + v * h, z, vis);
+}`,
+  },
+  {
+    // 전구: 유리구(구 표면) + 목 + 나사 base(나선) + 안쪽 필라멘트(강조)
+    name: 'bulb',
+    glsl: /* glsl */ `
+vec4 shape_bulb(vec3 s, vec3 r) {
+  float a = r.x * 6.2831853;
+  float yNeck = bulb_y - bulb_cut * bulb_radius; // 유리구가 목과 만나는 높이
+  float rNeck = bulb_radius * sqrt(1.0 - bulb_cut * bulb_cut);
+  float p = s.y;
+  if (p < BULB_FILAMENT) {
+    if (s.x < 0.7) {
+      float t = r.x * 6.2831853 * bulb_coils;
+      return vec4((r.x - 0.5) * bulb_filamentWidth, bulb_y + 0.09 * sin(t), 0.09 * cos(t), bulb_filamentGlow);
+    }
+    float side = s.z < 0.5 ? -1.0 : 1.0; // 지지선 2개
+    return vec4(side * mix(0.5 * bulb_filamentWidth, 0.12, r.y), mix(bulb_y, yNeck - 0.15, r.y), 0.0, bulb_filamentGlow);
+  }
+  p -= BULB_FILAMENT;
+  if (p < BULB_NECK) {
+    float rad = mix(rNeck, bulb_baseRadius, smoothstep(0.0, 1.0, r.y));
+    return vec4(cos(a) * rad, yNeck - r.y * bulb_neck, sin(a) * rad, bulb_glass);
+  }
+  p -= BULB_NECK;
+  if (p < BULB_BASE) {
+    float t = r.y * 6.2831853 * bulb_turns; // 나사산: 원기둥을 감는 나선
+    return vec4(cos(t) * bulb_baseRadius, yNeck - bulb_neck - r.y * bulb_baseHeight, sin(t) * bulb_baseRadius, 1.0);
+  }
+  float c = mix(-bulb_cut, 1.0, r.y); // 구 표면에 고르게, 아래쪽(목 자리)은 비운다
+  float sn = sqrt(max(0.0, 1.0 - c * c));
+  return vec4(cos(a) * sn * bulb_radius, bulb_y + c * bulb_radius, sin(a) * sn * bulb_radius, bulb_glass);
 }`,
   },
   {
     // 화면 가로 전체를 지나는 물결 띠
     name: 'band',
     glsl: /* glsl */ `
-vec4 shape_band(vec3 s) {
-  float x = (s.x - 0.5) * uBand.x;
-  float f = uBandWave.x;
-  float w = uTime * uBandWave.y;
+vec4 shape_band(vec3 s, vec3 r) {
+  float x = (s.x - 0.5) * band_width;
+  float w = uTime * band_speed;
   float t = s.y * 2.0 - 1.0;
-  float thick = uBand.z * (0.6 + 0.4 * sin(1.7 * f * x - w)); // 폭이 x를 따라 숨쉰다
-  float y = uBand.y * (sin(f * x + w) + 0.5 * sin(2.3 * f * x - 1.4 * w)) + t * abs(t) * thick * 0.5;
-  float z = (s.z - 0.5) * uBand.w + 0.3 * uBand.y * cos(f * x + w);
+  float thick = band_thickness * (0.6 + 0.4 * sin(1.7 * band_freq * x - w)); // 폭이 x를 따라 숨쉰다
+  float y = band_amp * (sin(band_freq * x + w) + 0.5 * sin(2.3 * band_freq * x - 1.4 * w)) + t * abs(t) * thick * 0.5;
+  float z = (s.z - 0.5) * band_depth + 0.3 * band_amp * cos(band_freq * x + w);
   return vec4(x, y, z, 1.0);
 }`,
   },
@@ -75,17 +166,12 @@ vec4 shape_band(vec3 s) {
 
 const shapes = /* glsl */ `
 uniform float uTime;
-uniform vec3 uRing;        // 반지름, 두께, z 두께
-uniform vec2 uSphere;      // 반지름, 표면 두께 비율
-uniform vec4 uSurface;     // 너비, 깊이, 진폭, 격자선 수
-uniform vec3 uSurfaceWave; // 주파수, 속도, y 위치
-uniform vec4 uStreams;     // 열 수, 너비, 높이, 깊이
-uniform vec4 uStreamFlow;  // 지터, 최소 속도, 최대 속도, 래핑 뒤 숨김 시간(초)
-uniform vec4 uBand;        // 너비, 진폭, 두께, 깊이
-uniform vec2 uBandWave;    // 주파수, 속도
+uniform float uOutline; // 윤곽선에 쓰는 점 비율
+${RATIOS}
+${dims}
 ${SHAPES.map((s) => s.glsl).join('\n')}
-vec4 shapeOrigin(int id, vec3 s) {
-${SHAPES.map((s, i) => `  if (id == ${i}) return shape_${s.name}(s);`).join('\n')}
+vec4 shapeOrigin(int id, vec3 s, vec3 r) {
+${SHAPES.map((s, i) => `  if (id == ${i}) return shape_${s.name}(s, r);`).join('\n')}
   return vec4(0.0, 0.0, 0.0, 1.0);
 }`;
 
@@ -177,15 +263,16 @@ void main() {
   vec3 pos = texture2D(tPos, uv).xyz;
   vec3 vel = texture2D(tVel, uv).xyz;
   vec3 s = seedOf(gl_FragCoord.xy, 0u);
+  vec3 r = seedOf(gl_FragCoord.xy, 2u);
   // 점당 shape 호출은 2번: 현재 섹션 shape와 다음 섹션 shape
-  vec4 origin = mix(shapeOrigin(uShapeA, s), shapeOrigin(uShapeB, s), uMix);
+  vec4 origin = mix(shapeOrigin(uShapeA, s, r), shapeOrigin(uShapeB, s, r), uMix);
   vec3 acc = (origin.xyz - pos) * uSpring;
   acc += curlNoise(pos * uNoiseFreq + uTime * uNoiseSpeed) * uNoiseAmp;
   vec3 d = pos - uPointer;
   float dist = length(d);
   acc += d / (dist + 1e-4) * uPointerForce * smoothstep(uPointerRadius, 0.0, dist);
   vel = (vel + acc * uDt) * exp(-uDamping * uDt);
-  gl_FragColor = vec4(vel, origin.w); // w: shape가 정한 가시도(렌더에서 알파에 곱한다)
+  gl_FragColor = vec4(vel, origin.w); // w: shape가 정한 가시도/강조(렌더에서 쓴다)
 }`;
 
 export const positionFrag = /* glsl */ `
@@ -203,7 +290,7 @@ uniform vec3 uScatter; // 최소 반지름, 최대 반지름, z 두께
 ${shapes}
 ${seed}
 void main() {
-  vec3 origin = shapeOrigin(uShapeA, seedOf(gl_FragCoord.xy, 0u)).xyz;
+  vec3 origin = shapeOrigin(uShapeA, seedOf(gl_FragCoord.xy, 0u), seedOf(gl_FragCoord.xy, 2u)).xyz;
   vec3 s = seedOf(gl_FragCoord.xy, 1u);
   float a = s.x * 6.2831853;
   vec3 far = vec3(cos(a), sin(a), 0.0) * mix(uScatter.x, uScatter.y, s.y) + vec3(0.0, 0.0, (s.z - 0.5) * uScatter.z);
@@ -213,27 +300,30 @@ void main() {
 // position 어트리뷰트의 xy는 시뮬 텍스처 uv다.
 export const pointsVert = /* glsl */ `
 uniform sampler2D tPos, tVel;
-uniform float uSize, uScale, uColorSpeed, uColorDist, uDim;
+uniform float uSize, uScale, uColorSpeed, uColorDist, uDim, uInsight;
 varying float vMix;
 varying float vVis;
 void main() {
   vec3 pos = texture2D(tPos, position.xy).xyz;
   vec4 velVis = texture2D(tVel, position.xy);
   vec3 vel = velVis.xyz;
-  vVis = velVis.w * uDim;
+  float glow = clamp(velVis.w - 1.0, 0.0, 1.0); // w가 1을 넘는 만큼 강조
+  vVis = min(velVis.w, 1.0) * uDim;
   vec4 mv = modelViewMatrix * vec4(pos, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = max(1.0, uSize * sqrt(uDim) * uScale / -mv.z);
+  gl_PointSize = max(1.0, uSize * sqrt(uDim) * (1.0 + glow) * uScale / -mv.z);
   vMix = clamp(length(vel) * uColorSpeed + length(pos) * uColorDist, 0.0, 1.0);
+  // insight 구간: 전체를 따뜻한 색 쪽으로, 강조 점(필라멘트)은 전부 그 색으로
+  vMix = max(mix(vMix, 1.0, 0.6 * uInsight), glow);
 }`;
 
 export const pointsFrag = /* glsl */ `
-uniform vec3 uColorA, uColorB;
-uniform float uAlpha;
+uniform vec3 uColorA, uColorB, uColorC; // 기본, accent, insight
+uniform float uAlpha, uInsight;
 varying float vMix;
 varying float vVis;
 void main() {
   float a = smoothstep(0.5, 0.0, length(gl_PointCoord - 0.5));
-  gl_FragColor = vec4(mix(uColorA, uColorB, vMix), a * a * uAlpha * vVis);
+  gl_FragColor = vec4(mix(uColorA, mix(uColorB, uColorC, uInsight), vMix), a * a * uAlpha * vVis);
   #include <colorspace_fragment>
 }`;

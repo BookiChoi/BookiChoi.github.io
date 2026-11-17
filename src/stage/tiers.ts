@@ -54,3 +54,40 @@ export function createFpsMeter(n = 60) {
     },
   };
 }
+
+/**
+ * tier 하향 판정. windowMs마다 평균 FPS를 내고, minFps 미만인 윈도우가 연속 `needed`번이면 true를 돌려준다.
+ * 일시적 끊김 한 번(나쁜 윈도우 1개)으로는 내려가지 않는다.
+ */
+export function createDownshiftGate(minFps = 45, windowMs = 2000, needed = 2) {
+  let frames = 0;
+  let elapsed = 0;
+  let strikes = 0;
+  let ignore = false;
+  return {
+    /** 프레임마다 직전 프레임 간격(ms)을 넘긴다. 지금 한 단계 낮춰야 하면 true. */
+    frame(dtMs: number): boolean {
+      frames++;
+      elapsed += dtMs;
+      if (elapsed < windowMs) return false;
+      const fps = (frames * 1000) / elapsed;
+      frames = 0;
+      elapsed = 0;
+      if (ignore) {
+        ignore = false;
+        return false;
+      }
+      strikes = fps < minFps ? strikes + 1 : 0;
+      if (strikes < needed) return false;
+      strikes = 0;
+      return true;
+    },
+    /** 탭 복귀나 tier 교체 직후: 누적을 버리고, 새로 시작하는 첫 윈도우는 판정하지 않는다. */
+    restart() {
+      frames = 0;
+      elapsed = 0;
+      strikes = 0;
+      ignore = true;
+    },
+  };
+}
