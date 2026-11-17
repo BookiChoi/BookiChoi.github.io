@@ -1,13 +1,18 @@
 import { DEBUG, debugLine } from './debug';
-import { compositeFrag, fieldFrag, inkVert, MAX_STAMPS } from './inkShaders';
+import { compositeFrag, fieldFrag, inkVert, MAX_LETTERS, MAX_STAMPS } from './inkShaders';
 
 // 히어로 잉크 리빌(WebGL2, three 미사용, 메인 스테이지와 별개의 컨텍스트).
 // 포인터 궤적을 저해상도 필드에 스탬프로 누적하고(마스크), 합성 셰이더가 그 안에만 흐르는 잉크 텍스처를 보여 준다.
-// 캔버스가 S0 배경 + 잉크 + 이름 글자까지 불투명하게 그리고, 잉크 안 글자는 흰색으로 반전된다.
+// 캔버스가 S0 배경 + 잉크 + 이름 글자까지 불투명하게 그린다. 마스크 안쪽은 ?ink= 로 고른다:
+//   name(기본): 어두운 바닥 위에 이름이 스타일 글자로(은빛 풍선 → 파스텔 풍선 → 네온, 잉크 세션마다 다음 스타일)
+//   smoke: 3색 + 군청의 부드러운 구름, 잉크 안 글자는 흰색으로 반전
 // DOM h1은 접근성용으로 남기고, 잉크가 켜졌을 때(html.ink-on)만 글자색을 투명하게 한다.
-const PALETTE = ['#ff2d9a', '#ff9f1c', '#7b2ff7', '#1f6bff', '#22d3ee']; // 고리로 보간
-const DEEP = '#0d1757'; // 깊이감용 어두운 군청(소량)
-const OCTAVES = 5; // fbm 옥타브. 느리면 4 → 3
+const SMOKE = ['#5b3df5', '#ff3d8b', '#ff9a3c', '#141a4d']; // 인디고, 마젠타, 오렌지, 깊이용 군청(소량)
+const STYLES = 3; // name 모드 스타일 수
+const EMPTY_MS = 2000; // 마지막 스탬프 뒤 이만큼 지나면(보이는 잉크 0%) 다음 입력은 새 세션 → 다음 스타일
+const SESSION_MS = 8000; // 한 세션이 이보다 길면 다음 스타일로 크로스페이드
+const FADE_MS = 400;
+const BLUR_EM = [0.035, 0.07]; // 글자 높이 지도 흐림 반경(글자 크기 비율): 작은 것(R, 윤곽 ≈ 0.5), 큰 것(G)
 const DPR_CAP = 1.5;
 const FIELD_SCALE = 0.25; // 마스크 필드 해상도(캔버스 픽셀 대비)
 const RADIUS_VW = [0.04, 0.07]; // 보이는 반경: 뷰포트 폭 비율(느림 → 빠름)
@@ -47,7 +52,8 @@ export function initInk(canvas: HTMLCanvasElement): void {
   const textCanvas = document.createElement('canvas');
   const tx = textCanvas.getContext('2d');
   if (!gl || !tx || !title) return;
-  const letters = [...title.querySelectorAll<HTMLElement>('.word span')];
+  const letters = [...title.querySelectorAll<HTMLElement>('.word span')].slice(0, MAX_LETTERS);
+  const mode = new URLSearchParams(location.search).get('ink') === 'smoke' ? 1 : 0; // 없거나 잘못된 값은 name
 
   // --- 프로그램 ---
   const compile = (vs: string, fs: string) => {
@@ -63,11 +69,11 @@ export function initInk(canvas: HTMLCanvasElement): void {
     return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
   };
   const fieldProg = compile(inkVert, fieldFrag);
-  const compProg = compile(inkVert, compositeFrag(OCTAVES));
+  const compProg = compile(inkVert, compositeFrag);
   if (!fieldProg || !compProg) return;
   const locs = (p: WebGLProgram, names: string[]) => Object.fromEntries(names.map((n) => [n, gl.getUniformLocation(p, n)]));
   const uf = locs(fieldProg, ['uPrev', 'uTexel', 'uSize', 'uBlur', 'uKeep', 'uSub', 'uCount', 'uSeg', 'uRS']);
-  const uc = locs(compProg, ['uField', 'uText', 'uSize', 'uShadowOff', 'uFlow', 'uTime', 'uBg', 'uFg', 'uShadow', 'uPal', 'uDeep']);
+  const uc = locs(compProg, ['uField', 'uText', 'uSize', 'uTexel', 'uShadowOff', 'uFlow', 'uTime', 'uBg', 'uFg', 'uShadow', 'uMode', 'uStyleA', 'uStyleB', 'uStyleMix', 'uLetters', 'uLetterCount', 'uSmoke']);
 
   // --- 색: CSS 변수(--hero-bg, --hero-fg)를 2D 캔버스로 정규화해서 읽는다 ---
   const rgb = (css: string, fallback: string) => {
@@ -80,14 +86,13 @@ export function initInk(canvas: HTMLCanvasElement): void {
   const bg = rgb(css.getPropertyValue('--hero-bg'), '#efeeea');
   const fg = rgb(css.getPropertyValue('--hero-fg'), '#0a0a0a');
   const shadow = bg.map((v) => v * 0.86);
-  const pal = new Float32Array(PALETTE.flatMap((c) => rgb(c, c)));
-  const deep = rgb(DEEP, DEEP);
+  const smokeColors = new Float32Array(SMOKE.flatMap((c) => rgb(c, c)));
   gl.useProgram(compProg);
   gl.uniform3fv(uc.uBg, bg);
   gl.uniform3fv(uc.uFg, fg);
   gl.uniform3fv(uc.uShadow, shadow);
-  gl.uniform3fv(uc.uPal, pal);
-  gl.uniform3fv(uc.uDeep, deep);
+  gl.uniform3fv(uc.uSmoke, smokeColors);
+  gl.uniform1i(uc.uMode, mode);
   gl.uniform1i(uc.uField, 0);
   gl.uniform1i(uc.uText, 1);
   gl.useProgram(fieldProg);
@@ -161,6 +166,38 @@ export function initInk(canvas: HTMLCanvasElement): void {
   let areaEst = 0;
   const pointer = newPen();
   const sweepPen = newPen();
+  // name 모드 스타일: 새 세션마다 다음 스타일(시작 −1 → 첫 자동 스윕은 0), 긴 세션은 크로스페이드
+  let styleA = -1;
+  let styleB = 0;
+  let styleMix = 0;
+  let sessionStart = 0;
+  let fadeStart = -1;
+  const letterRects = new Float32Array(MAX_LETTERS * 4);
+  const label = () => (mode ? 'smoke' : `name style ${Math.max(0, styleA)}${fadeStart >= 0 ? `→${styleB}` : ''}`);
+  function newSession(now: number) {
+    if (fadeStart >= 0) styleA = styleB; // 크로스페이드 중이면 끝낸 상태에서 넘긴다
+    styleA = (styleA + 1) % STYLES;
+    styleMix = 0;
+    fadeStart = -1;
+    sessionStart = now;
+    if (DEBUG) debugLine('ink', `ink run  ${label()}  new session`);
+  }
+  const stepStyle = (now: number) => {
+    if (mode || styleA < 0) return;
+    if (fadeStart < 0 && now - sessionStart > SESSION_MS) {
+      fadeStart = now;
+      styleB = (styleA + 1) % STYLES;
+    }
+    if (fadeStart >= 0) {
+      styleMix = smooth(clamp01((now - fadeStart) / FADE_MS));
+      if (styleMix >= 1) {
+        styleA = styleB;
+        styleMix = 0;
+        fadeStart = -1;
+        sessionStart = now;
+      }
+    }
+  };
 
   const estimate = (now: number) => {
     let sum = 0;
@@ -183,7 +220,10 @@ export function initInk(canvas: HTMLCanvasElement): void {
     const shown = clamp01((s - 0.3) / 0.7);
     const len = Math.hypot(x1 - x0, y1 - y0);
     addArea((len * 2 * vis + (dot ? Math.PI * vis * vis : 0)) * shown, now);
-    if (shown > 0) lastStamp = now;
+    if (shown > 0) {
+      if (now - lastStamp > EMPTY_MS) newSession(now);
+      lastStamp = now;
+    }
     let k = stamps;
     if (k === MAX_STAMPS) {
       k = MAX_STAMPS - 1;
@@ -265,6 +305,9 @@ export function initInk(canvas: HTMLCanvasElement): void {
     gl.uniform2f(uc.uShadowOff, SHADOW_PX[0] / w, -SHADOW_PX[1] / h);
     gl.uniform2f(uc.uFlow, flowX, flowY);
     gl.uniform1f(uc.uTime, time);
+    gl.uniform1i(uc.uStyleA, styleA);
+    gl.uniform1i(uc.uStyleB, styleB);
+    gl.uniform1f(uc.uStyleMix, styleMix);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
   const clearField = () => {
@@ -276,29 +319,59 @@ export function initInk(canvas: HTMLCanvasElement): void {
   };
 
   /** 이름 글자를 오프스크린 캔버스에 DOM과 같은 위치·폰트로 그려 텍스처로 올린다 */
+  /** 이름 글자를 DOM과 같은 위치·폰트로 오프스크린 캔버스에 그려 텍스처로 올린다.
+   *  채널: R 작은 흐림, G 큰 흐림(name 모드 높이 지도와 네온 글로우), B 선명한 글자. 불투명 검정 위에 'lighter'로 더해 채널이 섞이지 않는다 */
   const buildText = () => {
     const c = canvas.getBoundingClientRect();
     textCanvas.width = canvas.width;
     textCanvas.height = canvas.height;
+    tx.setTransform(1, 0, 0, 1, 0, 0);
+    tx.globalCompositeOperation = 'source-over';
+    tx.fillStyle = '#000';
+    tx.fillRect(0, 0, textCanvas.width, textCanvas.height);
     tx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    tx.clearRect(0, 0, w, h);
-    tx.fillStyle = '#fff';
+    tx.globalCompositeOperation = 'lighter';
     tx.textBaseline = 'alphabetic';
-    for (const el of letters) {
-      const ch = el.textContent ?? '';
+    const glyphs = letters.map((el, k) => {
       const s = getComputedStyle(el);
-      tx.font = `${s.fontStyle} ${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+      const font = `${s.fontStyle} ${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+      tx.font = font;
+      const ch = el.textContent ?? '';
       const r = el.getBoundingClientRect();
       const m = tx.measureText(ch);
+      letterRects.set([(r.left - c.left) / w, 1 - (r.bottom - c.top) / h, (r.right - c.left) / w, 1 - (r.top - c.top) / h], k * 4);
       // inline-block 글자 상자 안의 기준선: CSS half-leading과 같은 계산
-      const base = r.top - c.top + (r.height - m.fontBoundingBoxAscent - m.fontBoundingBoxDescent) / 2 + m.fontBoundingBoxAscent;
-      tx.fillText(ch, r.left - c.left, base);
+      return { ch, font, size: parseFloat(s.fontSize), x: r.left - c.left, y: r.top - c.top + (r.height - m.fontBoundingBoxAscent - m.fontBoundingBoxDescent) / 2 + m.fontBoundingBoxAscent };
+    });
+    // 흐림: 글자를 캔버스 밖에 그리고 그림자만 제자리로 떨어뜨린다(shadowBlur·shadowOffset은 변환 행렬과 무관한 픽셀 단위)
+    const away = w + 1000;
+    for (const [color, em] of [['#ff0000', BLUR_EM[0]], ['#00ff00', BLUR_EM[1]]] as const) {
+      tx.shadowColor = color;
+      tx.shadowOffsetX = -away * dpr;
+      for (const g of glyphs) {
+        tx.font = g.font;
+        tx.shadowBlur = em * g.size * dpr * 2; // shadowBlur는 시그마의 약 2배
+        tx.fillText(g.ch, g.x + away, g.y);
+      }
     }
+    tx.shadowColor = 'transparent';
+    tx.shadowBlur = 0;
+    tx.shadowOffsetX = 0;
+    tx.fillStyle = '#0000ff';
+    for (const g of glyphs) {
+      tx.font = g.font;
+      tx.fillText(g.ch, g.x, g.y);
+    }
+    tx.globalCompositeOperation = 'source-over';
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, textTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textCanvas);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.useProgram(compProg);
+    gl.uniform2f(uc.uTexel, 1 / textCanvas.width, 1 / textCanvas.height);
+    gl.uniform4fv(uc.uLetters, letterRects);
+    gl.uniform1i(uc.uLetterCount, glyphs.length);
   };
 
   const resize = () => {
@@ -352,19 +425,20 @@ export function initInk(canvas: HTMLCanvasElement): void {
     flowVX *= Math.exp(-2 * dt);
     flowVY *= Math.exp(-2 * dt);
     areaEst = estimate(now);
+    stepStyle(now);
     fieldPass(dt);
     composite();
 
     if (DEBUG && now >= nextReport) {
       nextReport = now + 250;
-      debugLine('ink', `ink run  area~${Math.round(areaEst * 100)}%  ${useHalf ? 'R16F' : 'RGBA8'}`);
+      debugLine('ink', `ink run  ${label()}  area~${Math.round(areaEst * 100)}%  ${useHalf ? 'R16F' : 'RGBA8'}`);
     }
     if (sweepStart < 0 && now - lastStamp > STOP_MS) {
       // 필드는 이미 임계 아래다. 0으로 지우고 깨끗한 프레임(배경 + 검정 글자)을 남긴 뒤 멈춘다
       clearField();
       composite();
       stop();
-      debugLine('ink', `ink idle  ${useHalf ? 'R16F' : 'RGBA8'}`);
+      debugLine('ink', `ink idle  ${label()}  ${useHalf ? 'R16F' : 'RGBA8'}`);
     }
   };
 
@@ -451,7 +525,7 @@ export function initInk(canvas: HTMLCanvasElement): void {
     buildText();
     composite();
     root.classList.add('ink-on');
-    debugLine('ink', `ink idle  ${useHalf ? 'R16F' : 'RGBA8'}`);
+    debugLine('ink', `ink idle  ${label()}  ${useHalf ? 'R16F' : 'RGBA8'}`);
     trySweep(); // 이름 등장 직후 첫 스윕
   })();
 }
