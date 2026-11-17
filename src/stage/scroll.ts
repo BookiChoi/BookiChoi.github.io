@@ -1,55 +1,66 @@
 const IDS = ['s0', 's1', 's2', 's3', 's4'];
-const VARS = ['--p', ...IDS.map((id) => `--p-${id}`)];
+const LAST = IDS.length - 1;
 const SMOOTH = 8; // 클수록 스크롤을 빨리 따라간다 (1/s)
 
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+// 목표에 충분히 가까우면 스냅해서 끝값에 정확히 닿게 한다(정지 후에는 스타일 쓰기도 멈춘다)
+const follow = (v: number, target: number, k: number) => (Math.abs(target - v) < 0.0005 ? target : v + (target - v) * k);
 
 /**
- * 네이티브 스크롤을 rAF에서 읽어 부드럽게 한 진행도.
- * --p: 문서 전체 0..1. --p-sN: 섹션 N의 위쪽이 뷰포트 위쪽에 닿을 때 0, 섹션이 끝날 때 1.
- * (위쪽이 뷰포트 위에 닿을 수 없는 짧은 마지막 섹션은 화면에 들어올 때 0, 문서 끝에서 1.)
+ * 네이티브 스크롤(스냅 포함)을 rAF에서 읽어 부드럽게 한 진행도.
+ * --sec: 연속 섹션 인덱스 0..4. 섹션 i의 top에서 i, 다음 섹션 top까지 선형. 마지막 섹션 안에서는 4.
+ * --p: 문서 전체 0..1.
+ * --p-sN: 섹션 N의 가시 정도 = clamp(1 - |sec - N|). 화면에 딱 맞으면 1, 한 섹션 떨어지면 0.
+ * 스테이지 루프가 돌 때만 갱신된다(reduced-motion / no-webgl에서는 값이 없다).
  */
 export function createScroll() {
   const root = document.documentElement;
   const els = IDS.map((id) => document.getElementById(id));
-  const n = VARS.length;
-  const start = new Float32Array(n);
-  const span = new Float32Array(n).fill(1);
-  const value = new Float32Array(n);
-  const written = new Float32Array(n).fill(-1);
+  const tops = new Float32Array(IDS.length);
+  const vis = new Float32Array(IDS.length).fill(-1); // 마지막으로 쓴 --p-sN
+  let max = 1;
+  let wroteSec = -1;
+  let wroteP = -1;
 
   const state = {
     p: 0,
-    /** 링→구체 morph 0..1: S0을 지나 S1에 닿는 동안 */
+    sec: 0,
+    /** 링→구체 morph 0..1: sec 0→1 구간 */
     morph: 0,
     measure() {
       const y = window.scrollY;
-      const max = Math.max(1, root.scrollHeight - window.innerHeight);
-      span[0] = max;
+      max = Math.max(1, root.scrollHeight - window.innerHeight);
       els.forEach((el, i) => {
-        if (!el) return;
-        const top = el.getBoundingClientRect().top + y;
-        const reachable = Math.min(el.offsetHeight, max - top);
-        start[i + 1] = reachable > 0 ? top : top - window.innerHeight;
-        span[i + 1] = Math.max(1, reachable > 0 ? reachable : max - start[i + 1]);
+        if (el) tops[i] = el.getBoundingClientRect().top + y;
       });
     },
     update(dt: number) {
       const y = window.scrollY;
-      const k = 1 - Math.exp(-dt * SMOOTH);
-      for (let i = 0; i < n; i++) {
-        const target = clamp01((y - start[i]) / span[i]);
-        const v = value[i] + (target - value[i]) * k;
-        value[i] = Math.abs(target - v) < 0.0005 ? target : v; // 끝값(0, 1)에 정확히 닿게 스냅
-        // 값이 변했을 때만 스타일을 쓴다(정지 상태에서는 문자열 생성 없음)
-        if (value[i] !== written[i]) {
-          written[i] = value[i];
-          root.style.setProperty(VARS[i], value[i].toFixed(4));
+      let target = LAST;
+      for (let i = 0; i < LAST; i++) {
+        if (y < tops[i + 1]) {
+          target = i + (y - tops[i]) / Math.max(1, tops[i + 1] - tops[i]);
+          break;
         }
       }
-      state.p = value[0];
-      const m = value[1];
+      const k = 1 - Math.exp(-dt * SMOOTH);
+      const sec = (state.sec = follow(state.sec, Math.max(0, target), k));
+      const p = (state.p = follow(state.p, clamp01(y / max), k));
+      const m = clamp01(sec);
       state.morph = m * m * (3 - 2 * m);
+
+      // 값이 변했을 때만 스타일을 쓴다(정지 상태에서는 문자열 생성 없음)
+      if (p !== wroteP) root.style.setProperty('--p', (wroteP = p).toFixed(4));
+      if (sec !== wroteSec) {
+        root.style.setProperty('--sec', (wroteSec = sec).toFixed(4));
+        for (let i = 0; i <= LAST; i++) {
+          const v = clamp01(1 - Math.abs(sec - i));
+          if (v !== vis[i]) {
+            vis[i] = v;
+            root.style.setProperty(`--p-${IDS[i]}`, v.toFixed(4));
+          }
+        }
+      }
     },
   };
   state.measure();

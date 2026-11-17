@@ -1,0 +1,35 @@
+---
+// 우측 섹션 인디케이터. 스테이지(WebGL)와 독립이라 no-webgl / reduced-motion에서도 동작하고, JS가 꺼지면 일반 앵커다.
+interface Props { label: string; items: { id: string; label: string }[] }
+const { label, items } = Astro.props;
+---
+<nav class="section-nav" aria-label={label}>
+  {items.map((item, i) => (
+    <a href={`#${item.id}`} aria-label={item.label} aria-current={i === 0 ? 'true' : undefined}></a>
+  ))}
+</nav>
+
+<script>
+  const links = [...document.querySelectorAll<HTMLAnchorElement>('.section-nav a')];
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        for (const a of links) {
+          if (a.hash === `#${entry.target.id}`) a.setAttribute('aria-current', 'true');
+          else a.removeAttribute('aria-current');
+        }
+      }
+    },
+    { rootMargin: '-50% 0px -50% 0px' }, // 화면 세로 중앙선에 걸린 섹션이 현재 섹션
+  );
+  for (const a of links) {
+    const section = document.getElementById(a.hash.slice(1));
+    if (!section) continue;
+    io.observe(section);
+    a.addEventListener('click', (e) => {
+      e.preventDefault(); // 주소에 해시를 남기지 않는다. 부드럽게 갈지는 CSS scroll-behavior가 정한다
+      section.scrollIntoView();
+    });
+  }
+</script>

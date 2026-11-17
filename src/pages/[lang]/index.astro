@@ -1,7 +1,13 @@
 ---
 import { getCollection } from 'astro:content';
 import Base from '../../layouts/Base.astro';
+import SectionNav from '../../components/SectionNav.astro';
 import Stage from '../../components/Stage.astro';
+// display 타입 프리셋 a/b/c 폰트(홈 전용). 브라우저는 실제로 쓰는 프리셋의 파일만 내려받는다.
+import '@fontsource-variable/fraunces/full.css';
+import '@fontsource-variable/outfit/wght.css';
+import '@fontsource-variable/newsreader/opsz.css';
+import '@fontsource-variable/newsreader/opsz-italic.css';
 import '../../styles/stage.css';
 import { LANGS, SITE_NAME, SITE_SHORT, getT, type Lang } from '../../i18n';
 
@@ -13,9 +19,17 @@ const items = (await getCollection('projects'))
   .filter((p) => p.id.endsWith(`/${lang}`))
   .sort((a, b) => a.data.order - b.data.order);
 
-// 히어로 이름: 단어 → 글자, 글자마다 스태거 순번
+// 히어로 이름: 단어 → 글자, 글자마다 스태거 순번. 마지막 단어는 강조(em, 프리셋 c에서 italic).
 let n = 0;
 const words = SITE_NAME.split(' ').map((w) => [...w].map((ch) => ({ ch, i: n++ })));
+const roleWords = t.role.split(' ');
+const sections = [
+  { id: 's0', label: SITE_NAME },
+  { id: 's1', label: t.role },
+  { id: 's2', label: t.s2Label },
+  { id: 's3', label: t.s3Label },
+  { id: 's4', label: t.projects },
+];
 ---
 <Base lang={lang} path="/" description={t.intro}>
   <Stage />
@@ -23,34 +37,38 @@ const words = SITE_NAME.split(' ').map((w) => [...w].map((ch) => ({ ch, i: n++ }
     <a class="label" href={`/${lang}/`} aria-label={SITE_NAME}>{SITE_SHORT}</a>
     <a class="label" href={`/${other}/`} hreflang={other} lang={other}>{t.switchLang}</a>
   </header>
-  <main id="main" class="stage-main">
-    <section id="s0" class="s0">
-      <h1 class="hero-name" aria-label={SITE_NAME}>
-        {words.map((w, wi) => (
-          <>{wi > 0 && ' '}<span class="word">{w.map((l) => <span aria-hidden="true" style={`--i:${l.i}`}>{l.ch}</span>)}</span></>
-        ))}
+  <SectionNav label={t.sections} items={sections} />
+  <main id="main" class="stage-main" data-snap>
+    <section id="s0" class="snap screen s0">
+      <h1 class="hero-name display" aria-label={SITE_NAME}>
+        {words.map((w, wi) => {
+          const Word = wi === words.length - 1 ? 'em' : 'span';
+          return (
+            <>{wi > 0 && ' '}<Word class="word">{w.map((l) => <span aria-hidden="true" style={`--i:${l.i}`}>{l.ch}</span>)}</Word></>
+          );
+        })}
       </h1>
       <p class="scroll-hint label" aria-hidden="true">{t.scroll}<span class="scroll-line"></span></p>
     </section>
-    <section id="s1" class="tall">
-      <div class="pin">
-        <h2>{t.role}</h2>
-        <p>{t.intro}</p>
+    <section id="s1" class="snap screen">
+      <div class="wrap">
+        <h2 class="role display">{roleWords.slice(0, -1).join(' ')} <em>{roleWords.at(-1)}</em></h2>
+        <p class="statement">{t.intro}</p>
       </div>
     </section>
-    <section id="s2" class="tall">
-      <div class="pin">
+    <section id="s2" class="snap screen">
+      <div class="wrap">
         <h2 class="label">{t.s2Label}</h2>
-        <ul>{t.s2.map((line) => <li>{line}</li>)}</ul>
+        <ul class="statements">{t.s2.map((line) => <li class="statement">{line}</li>)}</ul>
       </div>
     </section>
-    <section id="s3" class="tall">
-      <div class="pin">
+    <section id="s3" class="snap screen">
+      <div class="wrap">
         <h2 class="label">{t.s3Label}</h2>
-        <ul>{t.s3.map((line) => <li>{line}</li>)}</ul>
+        <ul class="statements">{t.s3.map((line) => <li class="statement">{line}</li>)}</ul>
       </div>
     </section>
-    <section id="s4">
+    <section id="s4" class="snap">
       <div id="projects">
         <h2>{t.projects}</h2>
         <ul class="project-list">

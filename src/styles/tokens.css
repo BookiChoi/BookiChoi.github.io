@@ -5,8 +5,14 @@
   --text-secondary: #9a9aa6;
   --accent: #7c9cff;
   --border: rgba(255, 255, 255, 0.08);
-  --font-body: 'Geist Variable', 'Pretendard Variable', system-ui, sans-serif;
+  --font-body: 'Pretendard Variable', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+  /* display 타입 프리셋: <html data-type="a|b|c">. 속성이 없으면(JS 꺼짐) a. 폰트 CSS는 홈에서만 import한다. */
+  --font-display: 'Fraunces Variable', 'Pretendard Variable', serif; /* a: 소프트 세리프 */
+  --display-weight: 300;
+  --display-tracking: -0.03em;
+  --display-settings: 'SOFT' 100, 'WONK' 0; /* opsz는 글자 크기를 따라 자동 */
+  --display-em-style: normal;
   --prose-max: 860px;
   --header-h: 3rem;
   --z-stage: 0;
@@ -14,6 +20,19 @@
   --z-header: 5;
   --stage-glow: rgba(124, 156, 255, 0.14);
   --stage-vignette: rgba(5, 5, 7, 0.6);
+}
+[data-type='b'] { /* 라운드 기하학 */
+  --font-display: 'Outfit Variable', 'Pretendard Variable', sans-serif;
+  --display-weight: 250;
+  --display-tracking: -0.02em;
+  --display-settings: normal;
+}
+[data-type='c'] { /* 에디토리얼 세리프, 강조 단어(em)는 italic */
+  --font-display: 'Newsreader Variable', 'Pretendard Variable', serif;
+  --display-weight: 300;
+  --display-tracking: -0.025em;
+  --display-settings: normal;
+  --display-em-style: italic;
 }
 *, *::before, *::after { box-sizing: border-box; }
 html { background: var(--bg); }

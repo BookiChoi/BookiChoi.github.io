@@ -17,8 +17,9 @@ import { initFrag, pointsFrag, pointsVert, positionFrag, velocityFrag } from './
 // 튜닝 파라미터는 전부 여기. 길이 단위는 월드 유닛.
 export const PARAMS = {
   // 시뮬레이션
-  spring: 3, // origin으로 당기는 힘
+  spring: 3, // origin으로 당기는 힘 (입장이 끝난 뒤의 평소 값)
   damping: 3, // 속도 감쇠 (1/s)
+  introDuration: 2, // 입장: 흩어진 점이 shape로 모이는 데 걸리는 시간(초)
   noiseAmp: 0.1,
   noiseFreq: 0.9,
   noiseSpeed: 0.12,
@@ -33,8 +34,8 @@ export const PARAMS = {
   shapeA: 0, // SHAPES 인덱스 (shaders.ts)
   shapeB: 1,
   // 입장 연출 시작 위치
-  scatterMin: 6,
-  scatterMax: 10,
+  scatterMin: 3, // 화면 가장자리 근처라 첫 프레임부터 점이 보인다
+  scatterMax: 5,
   scatterDepth: 2,
   // 렌더 (512 tier 기준, 낮은 tier는 자동 보정)
   pointSize: 0.01,
@@ -60,7 +61,7 @@ export interface Particles {
 }
 
 /**
- * scatter: 1이면 화면 밖에서 시작, 0이면 origin에서 시작.
+ * scatter: 1이면 흩어진 위치에서 시작(입장 연출), 0이면 origin에서 시작.
  * from을 주면 초기 위치 대신 그 상태를 이어받는다(tier 하향 시 튐 방지).
  */
 export function createParticles(
@@ -162,6 +163,11 @@ export function createParticles(
       draw.uScale.value = pxPerUnit;
     },
     step(dt, time, morph, pointer) {
+      // 입장 구간은 introDuration 안에 수렴하는 임계감쇠 스프링(ω = 6/T), 끝나면 1초에 걸쳐 평소 값으로
+      const w = 6 / P.introDuration;
+      const a = Math.min(1, Math.max(0, time - P.introDuration));
+      sim.uSpring.value = w * w + (P.spring - w * w) * a;
+      sim.uDamping.value = 2 * w + (P.damping - 2 * w) * a;
       sim.uDt.value = dt;
       sim.uTime.value = time;
       sim.uMorph.value = morph;

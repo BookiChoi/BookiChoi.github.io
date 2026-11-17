@@ -1,19 +1,44 @@
 ---
 // 고정 배경 3겹: 정적 그라데이션(폴백) → WebGL 캔버스 → 비네트. 콘텐츠는 이 위에 올라간다.
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+// modulepreload 시도: 빌드의 페이지 생성 시점에는 클라이언트 청크가 이미 dist/_astro에 있어서 해시 파일명을 찾을 수 있다.
+// shortcut: 빌드 순서와 기본 outDir(dist)에 기댄다. 못 찾으면 링크 없이 import만 한다. astro.config를 고칠 수 있게 되면 통합 훅으로 옮길 것.
+let stageChunk: string | undefined;
+if (import.meta.env.PROD) {
+  try {
+    stageChunk = readdirSync(join(process.cwd(), 'dist/_astro')).find((f) => /^stage\..+\.js$/.test(f));
+  } catch {
+    // dist가 없으면 preload 없이 진행
+  }
+}
 ---
+{stageChunk && <link rel="modulepreload" href={`/_astro/${stageChunk}`} />}
+<script is:inline>
+  // 콘텐츠가 그려지기 전에 실행: 타입 프리셋(쿼리 우선, 기본 a)과 이름 등장 대기.
+  (() => {
+    const root = document.documentElement;
+    const type = new URLSearchParams(location.search).get('type');
+    root.dataset.type = type === 'b' || type === 'c' ? type : 'a';
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    // 이름 글자는 스테이지 첫 프레임('stage:ready') 또는 600ms 중 먼저 오는 때 등장한다
+    root.classList.add('intro-wait');
+    const go = () => root.classList.replace('intro-wait', 'intro-go');
+    addEventListener('stage:ready', go, { once: true });
+    setTimeout(go, 600);
+  })();
+</script>
 <div class="stage-bg" aria-hidden="true"></div>
 <canvas id="stage" aria-hidden="true"></canvas>
 <div class="stage-vignette" aria-hidden="true"></div>
 
 <script>
-  // 첫 페인트 뒤에 three 청크를 불러온다. 실패하면 정적 배경으로 남는다.
+  // 모듈 스크립트라 파싱 직후(DOMContentLoaded 무렵) 실행된다. 기다리지 않고 바로 three 청크를 불러온다.
   const canvas = document.getElementById('stage');
   if (canvas instanceof HTMLCanvasElement) {
-    const load = () =>
-      import('../stage/index')
-        .then((m) => m.initStage(canvas))
-        .catch(() => document.documentElement.classList.add('no-webgl'));
-    if ('requestIdleCallback' in window) requestIdleCallback(load, { timeout: 1500 });
-    else setTimeout(load, 200);
+    import('../stage/index')
+      .then((m) => m.initStage(canvas))
+      .catch(() => document.documentElement.classList.add('no-webgl'));
   }
 </script>

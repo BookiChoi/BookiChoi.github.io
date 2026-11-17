@@ -37,12 +37,19 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   const root = document.documentElement;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const debug = createDebug();
-  const info = { webgl2: false, tex: 'none', tier: 0, dpr: 1 };
-  const report = (fps = 0, p = 0) =>
+  const info = { webgl2: false, tex: 'none', tier: 0, dpr: 1, tReady: -1 };
+  const report = (fps = 0, p = 0, sec = 0) =>
     debug?.(
       `tier ${info.tier} (${info.tier * info.tier} pts)\ndpr ${info.dpr.toFixed(2)}\nfps ${fps.toFixed(1)}\n` +
-        `webgl2 ${info.webgl2}\ntex ${info.tex}\nreduced-motion ${reduced}\n--p ${p.toFixed(3)}`,
+        `webgl2 ${info.webgl2}\ntex ${info.tex}\nreduced-motion ${reduced}\n` +
+        `--p ${p.toFixed(3)}  --sec ${sec.toFixed(3)}\nt_ready ${info.tReady < 0 ? '-' : `${Math.round(info.tReady)} ms`}`,
     );
+  // 첫 프레임이 그려졌다: 캔버스를 드러내고 이름 등장을 시작시킨다(Stage.astro 인라인 스크립트가 듣는다)
+  const markReady = () => {
+    info.tReady = performance.now(); // 페이지 로드(time origin) → 첫 프레임
+    root.classList.add('stage-ready');
+    dispatchEvent(new Event('stage:ready'));
+  };
   const fail = () => {
     root.classList.remove('stage-ready');
     root.classList.add('no-webgl');
@@ -178,7 +185,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     renderer.render(scene, camera);
     if (!ready) {
       ready = true;
-      root.classList.add('stage-ready');
+      markReady();
     }
 
     if (warmup > 0) warmup--;
@@ -189,7 +196,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     }
     if (debug && now >= nextReport) {
       nextReport = now + 250;
-      report(meter.fps, scroll.p);
+      report(meter.fps, scroll.p, scroll.sec);
     }
   };
 
@@ -236,9 +243,11 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
 
   if (reduced) {
     // 정적 한 장: origin에서 시작해 몇 스텝만 돌리고 멈춘다. 스크롤/포인터/루프 없음.
-    for (let i = 0; i < STATIC_STEPS; i++) particles.step(1 / 30, i / 30, 0, pointer);
+    // 시간은 입장 구간 뒤로 넘겨 평소 스프링 값으로 돌린다
+    const t0 = PARAMS.introDuration + 1;
+    for (let i = 0; i < STATIC_STEPS; i++) particles.step(1 / 30, t0 + i / 30, 0, pointer);
     renderer.render(scene, camera);
-    root.classList.add('stage-ready');
+    markReady();
     report();
     return destroy;
   }
