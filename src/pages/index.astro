@@ -1,0 +1,29 @@
+---
+import '../styles/tokens.css';
+import { SITE_NAME } from '../i18n';
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{SITE_NAME}</title>
+    <link rel="canonical" href={new URL('/en/', Astro.site).href} />
+    <link rel="alternate" hreflang="en" href={new URL('/en/', Astro.site).href} />
+    <link rel="alternate" hreflang="ko" href={new URL('/ko/', Astro.site).href} />
+    <link rel="alternate" hreflang="x-default" href={new URL('/en/', Astro.site).href} />
+    <script is:inline>
+      try {
+        var l = localStorage.getItem('language');
+        if (l !== 'en' && l !== 'ko') l = (navigator.language || '').toLowerCase().startsWith('ko') ? 'ko' : 'en';
+        location.replace('/' + l + '/');
+      } catch (e) { location.replace('/en/'); }
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1>{SITE_NAME}</h1>
+      <noscript><p><a href="/en/">English</a> · <a href="/ko/">한국어</a></p></noscript>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,37 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../../layouts/Base.astro';
+import { getT, type Lang } from '../../../i18n';
+
+export async function getStaticPaths() {
+  return (await getCollection('projects')).map((entry) => {
+    const [slug, lang] = entry.id.split('/');
+    return { params: { lang, slug }, props: { entry } };
+  });
+}
+const lang = Astro.params.lang as Lang;
+const { entry } = Astro.props;
+const { data } = entry;
+const t = getT(lang);
+const { Content } = await render(entry);
+---
+<Base lang={lang} path={`/projects/${Astro.params.slug}/`} title={data.title} description={data.summary}>
+  <main id="main">
+    <article class="prose">
+      <h1>{data.title}</h1>
+      <p>{data.summary}</p>
+      <dl class="meta">
+        <dt class="label">{t.company}</dt><dd>{data.company}</dd>
+        <dt class="label">{t.dataset}</dt><dd>{data.dataset}</dd>
+        <dt class="label">{t.tags}</dt><dd>{data.tags.join(', ') || '—'}</dd>
+        <dt class="label">{t.status}</dt><dd>{t.statusLabels[data.status]}</dd>
+      </dl>
+      <Content />
+      <aside class="attribution">
+        <h2 class="label">{t.attribution}</h2>
+        {data.attribution.map((a) => <p>{a}</p>)}
+      </aside>
+      <p><a href={`/${lang}/#projects`}>← {t.back}</a></p>
+    </article>
+  </main>
+</Base>
