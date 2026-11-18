@@ -16,7 +16,7 @@
   "prev": "Previous",
   "next": "Next",
   "projects": "Projects",
-  "s5": "ONE PROJECT, ONE BOOK.",
+  "s5": "PROJECTS",
   "about": "ABOUT",
   "aboutLead": "I used to build screens. Now I write the questions.",
   "aboutBody": [
@@ -27,6 +27,9 @@
     "Now I'm studying data analytics in Vancouver. I set the question first, then check whether an insight is statistically significant. A claim backed by evidence persuades. When an answer comes back without significance, I call it what it is, no finding, and look for another route.",
     "AI agents are my team. I decide what to hand off and what to look at myself."
   ],
+  "skillsShow": "See skills",
+  "skillsHide": "Hide skills",
+  "skillGroups": { "data": "Data & Analysis", "frontend": "Frontend", "tools": "Tools & Collaboration", "ai": "AI" },
   "skip": "Skip to content",
   "back": "Back to projects",
   "company": "Company",

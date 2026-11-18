@@ -1,0 +1,117 @@
+---
+// S6(ABOUT): 소개 문단 + 스킬. 스킬은 그룹별 <ul>이 원본(스크린리더, JS 꺼짐에서 그대로 보임)이고,
+// JS가 있으면 평소엔 목록을 시각적으로만 숨기고 이름 사본(.sf, 장식)을 배경에 띄운다. 버튼을 누르면 사본이 각 li 자리로 모인다.
+import { SKILL_GROUPS } from '../data/skills';
+import type { getT } from '../i18n';
+interface Props { t: ReturnType<typeof getT> }
+const { t } = Astro.props;
+
+let n = 0;
+const groups = SKILL_GROUPS.map((g) => ({ id: g.id, items: g.items.map((name) => ({ name, i: n++ })) }));
+// 떠다니는 순서: 그룹을 돌아가며 하나씩(모바일에서 앞 24개만 보여도 네 그룹이 다 들어간다)
+const order: { name: string; i: number }[] = [];
+for (let k = 0; order.length < n; k++) for (const g of groups) if (g.items[k]) order.push(g.items[k]);
+// 고르게 흩어지는 고정값(할턴 수열): 매 빌드 같은 배치
+const halton = (i: number, b: number) => {
+  let f = 1, r = 0;
+  for (; i > 0; i = Math.floor(i / b)) r += (f /= b) * (i % b);
+  return r;
+};
+const r2 = (v: number) => Math.round(v * 100) / 100;
+const floats = order.map((s, j) => {
+  const z = halton(j + 1, 5); // 깊이: 클수록 가깝다(크고, 조금 밝고, 빠르다). 글자 0.8~2.2rem, 주기 90~45초
+  const sx = j % 2 ? 1 : -1;
+  const sy = j % 3 ? 1 : -1;
+  const d = 90 - z * 45;
+  const style = [
+    `left:${r2(halton(j + 1, 2) * 86 + 2)}%`,
+    `top:${r2(halton(j + 1, 3) * 92 + 2)}%`,
+    `--fs:${r2(0.8 + z * 1.4)}rem`,
+    `--o:${r2(0.035 + z * 0.045)}`, // 문단 가독성 우선: 가장 가까운 것도 0.08
+    `--d:${r2(d)}s`,
+    `--dl:-${r2(halton(j + 1, 7) * d)}s`,
+    `--dx:${r2(sx * (2 + 4 * halton(j + 1, 11)))}vw`,
+    `--dy:${r2(sy * (2 + 4 * halton(j + 1, 13)))}vw`,
+  ].join(';');
+  return { ...s, style };
+});
+---
+<section id="s6" class="snap">
+  <div class="skills-float" aria-hidden="true">
+    {floats.map((f) => <span class="sf" data-i={f.i} style={f.style}><span>{f.name}</span></span>)}
+  </div>
+  <div class="about">
+    <div class="about-head">
+      <h2 class="label about-label reveal" style="--i:0">{t.about}</h2>
+      <p class="about-lead display reveal" style="--i:1"><em>{t.aboutLead}</em></p>
+    </div>
+    <div class="about-body">
+      {t.aboutBody.map((para, i) => <p class="reveal" style={`--i:${i + 2}`}>{para}</p>)}
+      <button type="button" class="skills-toggle reveal" style="--i:8" aria-expanded="false" aria-controls="skill-groups" data-show={t.skillsShow} data-hide={t.skillsHide} hidden>{t.skillsShow}</button>
+    </div>
+    <div id="skill-groups" class="skill-groups">
+      {groups.map((g) => (
+        <section class="skill-group">
+          <h3 class="label">{t.skillGroups[g.id]}</h3>
+          <ul>{g.items.map((s) => <li data-i={s.i}>{s.name}</li>)}</ul>
+        </section>
+      ))}
+    </div>
+  </div>
+</section>
+
+<script>
+  const sec = document.getElementById('s6');
+  const btn = sec?.querySelector<HTMLButtonElement>('.skills-toggle');
+  const layer = sec?.querySelector<HTMLElement>('.skills-float');
+  if (sec && btn && layer) {
+    document.documentElement.classList.add('skills-on');
+    btn.hidden = false;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+    const MOVE = 800; // stage.css .sf transform 전환과 같은 값
+    const FADE = 300; // 사본 ↔ li 교차 페이드
+    const floats = [...layer.querySelectorAll<HTMLElement>('.sf')];
+    const items = new Map([...sec.querySelectorAll<HTMLElement>('.skill-groups li')].map((li) => [li.dataset.i, li]));
+    let open = false;
+    let timer = 0;
+    // 화면 밖이면 떠다니는 애니메이션을 멈춘다(-2px: S5에 있을 때 화면 아래 가장자리에 맞닿은 S6를 보이는 것으로 치지 않게)
+    new IntersectionObserver(([e]) => sec.classList.toggle('skills-idle', !e.isIntersecting), { rootMargin: '-2px 0px' }).observe(sec);
+
+    btn.addEventListener('click', () => {
+      open = !open;
+      btn.setAttribute('aria-expanded', String(open));
+      btn.textContent = (open ? btn.dataset.hide : btn.dataset.show) ?? '';
+      clearTimeout(timer);
+      if (reduce.matches) {
+        // 떠다니는 레이어 없음: 정적 목록만 토글
+        sec.classList.toggle('is-open', open);
+        sec.classList.toggle('is-done', open);
+        return;
+      }
+      if (open) {
+        layer.style.height = `${layer.offsetHeight}px`; // 목록이 펼쳐져 S6가 길어져도 사본의 % 위치가 바뀌지 않게
+        sec.classList.add('is-open'); // 목록이 흐름에 들어오고(li 투명), 드리프트는 현재 자리에서 멈춘다
+        for (const f of floats) {
+          const li = items.get(f.dataset.i);
+          const word = f.firstElementChild as HTMLElement;
+          if (!li || !f.offsetParent) continue; // 모바일에서 숨긴 사본은 li가 그냥 나타난다
+          f.style.transform = '';
+          const o = f.getBoundingClientRect();
+          const a = word.getBoundingClientRect();
+          const b = li.getBoundingClientRect();
+          const s = parseFloat(getComputedStyle(li).fontSize) / parseFloat(getComputedStyle(word).fontSize);
+          // 원점(o) 기준 scale이라 드리프트 오프셋(a - o)도 s배가 된다
+          f.style.transform = `translate(${b.left - o.left - s * (a.left - o.left)}px, ${b.top - o.top - s * (a.top - o.top)}px) scale(${s})`;
+        }
+        timer = window.setTimeout(() => sec.classList.add('is-done'), MOVE);
+      } else {
+        sec.classList.remove('is-done'); // 사본이 li 자리에 다시 보이고 li는 사라진다
+        timer = window.setTimeout(() => {
+          for (const f of floats) f.style.transform = '';
+          sec.classList.remove('is-open');
+          timer = window.setTimeout(() => (layer.style.height = ''), MOVE);
+        }, FADE);
+      }
+    });
+  }
+</script>

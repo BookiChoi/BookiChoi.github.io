@@ -26,6 +26,11 @@ export function createScroll() {
   const state = {
     p: 0,
     sec: 0,
+    last: LAST,
+    /** 마지막 섹션(s6) top의 문서 y. scrollY가 이 이상이면 s6가 화면을 다 덮는다 */
+    get lastTop() {
+      return tops[LAST];
+    },
     measure() {
       const y = window.scrollY;
       max = Math.max(1, root.scrollHeight - window.innerHeight);

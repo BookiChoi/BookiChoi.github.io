@@ -4,6 +4,7 @@ import Base from '../../layouts/Base.astro';
 import SectionNav from '../../components/SectionNav.astro';
 import NameInk from '../../components/NameInk.astro';
 import Stage from '../../components/Stage.astro';
+import About from '../../components/About.astro';
 // display 타입 프리셋 a/b/c 폰트(홈 전용). 브라우저는 실제로 쓰는 프리셋의 파일만 내려받는다.
 import '@fontsource-variable/fraunces/full.css';
 import '@fontsource-variable/outfit/wght.css';
@@ -32,7 +33,6 @@ const [s1a, s1b] = lastWord(t.role);
 const [s2a, s2b] = lastWord(t.s2);
 const [s3a, s3b] = lastWord(t.s3);
 const [s4a, s4b] = lastWord(t.s4);
-const [s5a, s5b] = lastWord(t.s5);
 const sections = [
   { id: 's0', label: SITE_NAME },
   { id: 's1', label: t.s1Label },
@@ -101,7 +101,7 @@ const books = JSON.stringify(
     </section>
     <section id="s5" class="snap">
       <div id="projects">
-        <h2 class="role display reveal" style="--i:0">{s5a}<em>{s5b}</em></h2>
+        <h2 class="label eyebrow reveal" style="--i:0">{t.s5}</h2>
         <ul class="project-list">
           {items.map((p, i) => (
             <li class="reveal" style={`--i:${i + 1}`}>
@@ -122,16 +122,6 @@ const books = JSON.stringify(
         <span class="label">{t.open} →</span>
       </div>
     </section>
-    <section id="s6" class="snap">
-      <div class="about">
-        <div class="about-head">
-          <h2 class="label about-label reveal" style="--i:0">{t.about}</h2>
-          <p class="about-lead display reveal" style="--i:1"><em>{t.aboutLead}</em></p>
-        </div>
-        <div class="about-body">
-          {t.aboutBody.map((para, i) => <p class="reveal" style={`--i:${i + 2}`}>{para}</p>)}
-        </div>
-      </div>
-    </section>
+    <About t={t} />
   </main>
 </Base>

@@ -218,7 +218,10 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     const dt = Math.min(raw, 1 / 30);
     // S0이 캔버스를 다 가리는 동안은 시뮬·렌더·FPS 판정을 건너뛰고 시간도 얼린다(잉크 컨텍스트와 GPU를 나눠 쓰지 않게).
     // 입장 스프링이 끝난 뒤에만 멈춰서, 스크롤하면 수렴한 상태 그대로 이어진다
-    const hold = ready && time > PARAMS.introDuration + 1 && scrollY <= PAUSE_Y;
+    // S6(불투명 소개)도 같다: sec가 마지막 섹션에 다 따라온 뒤(책은 이미 비활성·숨김)에만 멈춘다
+    const hold =
+      ready &&
+      ((time > PARAMS.introDuration + 1 && scrollY <= PAUSE_Y) || (scroll.sec >= scroll.last && scrollY >= scroll.lastTop - 1));
     if (hold !== paused) {
       paused = hold;
       if (!hold) gate.restart(); // 재개 직후 첫 윈도우는 tier 판정에서 뺀다
