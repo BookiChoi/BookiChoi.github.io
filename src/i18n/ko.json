@@ -28,7 +28,9 @@
     "AI 에이전트는 제 팀입니다. 무엇을 맡기고 무엇을 직접 볼지 제가 정합니다."
   ],
   "skillsShow": "스킬 보기",
-  "skillsHide": "스킬 접기",
+  "skillsBack": "소개로 돌아가기",
+  "skillsLabel": "스킬",
+  "skillsTrademark": "로고의 상표권은 각 소유자에게 있습니다.",
   "skillGroups": { "data": "데이터 분석", "frontend": "프론트엔드", "tools": "도구·협업", "ai": "AI" },
   "skip": "본문으로 건너뛰기",
   "back": "프로젝트 목록으로",

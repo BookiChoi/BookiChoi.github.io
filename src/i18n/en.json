@@ -28,7 +28,9 @@
     "AI agents are my team. I decide what to hand off and what to look at myself."
   ],
   "skillsShow": "See skills",
-  "skillsHide": "Hide skills",
+  "skillsBack": "Back to story",
+  "skillsLabel": "Skills",
+  "skillsTrademark": "Logos are trademarks of their respective owners.",
   "skillGroups": { "data": "Data & Analysis", "frontend": "Frontend", "tools": "Tools & Collaboration", "ai": "AI" },
   "skip": "Skip to content",
   "back": "Back to projects",

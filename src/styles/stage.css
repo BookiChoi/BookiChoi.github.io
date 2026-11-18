@@ -137,58 +137,17 @@ main.stage-main {
 }
 .book-overlay { position: fixed; z-index: var(--z-header); border-radius: 4px; pointer-events: none; view-transition-name: book-cover; }
 
-/* --- S6(ABOUT): 불투명 배경이 고정 캔버스(점, 책)를 덮는다. 스냅은 start만(snap-stop 없음): 한 화면보다 길면 그 안에서 그냥 스크롤된다 --- */
-#s6 { position: relative; overflow: clip; background: var(--bg); padding: calc(var(--header-h) + 4rem) 1.5rem 6rem; }
-@media (max-width: 899px) { #s6 { padding-right: 3.5rem; } } /* 긴 문단이 오른쪽 섹션 점(터치 2.75rem 칸) 밑을 지나지 않게 */
-.about { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; display: grid; gap: 2rem 4rem; align-items: start; }
+/* --- S6(ABOUT): 불투명 배경이 고정 캔버스(점, 책)를 덮는다. 스냅은 start만(snap-stop 없음): 한 화면보다 길면 그 안에서 그냥 스크롤된다.
+   여백은 .s6-story가 갖는다(#s6 첫 자식인 sticky 별·배지 층이 S6 맨 위·전체 폭에서 시작하게). 스킬 연출은 about.css --- */
+#s6 { position: relative; overflow: clip; background: var(--bg); }
+.s6-story { position: relative; z-index: 1; padding: calc(var(--header-h) + 4rem) 1.5rem 6rem; }
+@media (max-width: 899px) { .s6-story { padding-right: 3.5rem; } } /* 긴 문단이 오른쪽 섹션 점(터치 2.75rem 칸) 밑을 지나지 않게 */
+.about { max-width: 1100px; margin: 0 auto; display: grid; gap: 2rem 4rem; align-items: start; }
 @media (min-width: 900px) and (min-aspect-ratio: 1/1) { .about { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); } }
 .about-label { margin: 0 0 1.25rem; font-weight: 400; letter-spacing: 0.2em; }
 .about-lead { margin: 0; font-size: clamp(1.5rem, 3vw, 2.5rem); line-height: 1.2; }
 .about-body p { margin: 0 0 1.25rem; max-width: 34rem; font-size: 1.0625rem; line-height: 1.75; }
 :lang(ko) .about-body p { line-height: 1.85; word-break: keep-all; }
-
-/* S6 스킬(About.astro). 원본은 그룹별 <ul>: JS 꺼짐이면 그대로 보이고, JS가 있으면(html.skills-on) 평소엔 시각적으로만 숨긴다 */
-.skills-toggle {
-  margin-top: 1rem;
-  min-height: 2.75rem;
-  padding: 0 1.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text);
-  font: 0.8rem/1 var(--font-mono);
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.skills-toggle:hover { border-color: var(--accent); color: var(--accent); }
-.skills-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.skill-groups { grid-column: 1 / -1; display: grid; gap: 2rem 2.5rem; margin-top: 1rem; }
-@media (min-width: 900px) and (min-aspect-ratio: 1/1) { .skill-groups { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-.skill-group h3 { margin: 0 0 0.9rem; font-weight: 400; letter-spacing: 0.2em; text-transform: uppercase; }
-.skill-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; }
-.skill-group li, .sf > span { font-family: var(--font-body); line-height: 1.3; white-space: nowrap; }
-.skill-group li { font-size: 0.95rem; color: var(--text); transition: opacity 0.3s ease; }
-.skills-on #s6:not(.is-open) .skill-groups { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.skills-on #s6.is-open:not(.is-done) .skill-group li { opacity: 0; } /* 사본이 날아오는 동안 */
-/* 떠다니는 사본(장식): 깊이에 따라 크기·밝기·속도가 다르다(값은 About.astro가 인라인 변수로) */
-.skills-float { display: none; }
-.skills-on .skills-float { display: block; position: absolute; top: 0; left: 0; right: 0; height: 100%; z-index: 0; pointer-events: none; }
-.sf { position: absolute; transform-origin: 0 0; transition: transform 0.8s cubic-bezier(0.6, 0, 0.2, 1), opacity 0.3s ease; }
-.sf > span {
-  display: inline-block;
-  font-size: var(--fs);
-  color: var(--text);
-  opacity: var(--o);
-  animation: sf-drift var(--d) ease-in-out var(--dl) infinite alternate;
-  transition: opacity 0.8s ease;
-}
-@keyframes sf-drift { to { transform: translate3d(var(--dx), var(--dy), 0); } }
-#s6.skills-idle .sf > span, #s6.is-open .sf > span { animation-play-state: paused; }
-#s6.is-open .sf > span { opacity: 0.9; }
-#s6.is-done .sf { opacity: 0; }
-@media (max-width: 899px) { .sf:nth-child(n + 25) { display: none; } } /* 모바일: 떠다니는 건 24개까지(모인 목록에는 전부) */
-@media (prefers-reduced-motion: reduce) { .skills-on .skills-float { display: none; } }
 
 /* --- 섹션 텍스트 등장 (시간 기반) ---
    기본은 항상 보인다. JS가 html.js-sections를 붙였을 때만 숨겼다가, 현재 섹션([data-active])에서 --i 순서로 등장시킨다. */
@@ -257,7 +216,7 @@ main.stage-main {
 }
 .role { margin: 0 0 1.5rem; font-size: clamp(2.25rem, 7vw, 5.5rem); line-height: 1.05; }
 /* 한글에는 세리프 display를 쓰지 않는다. Pretendard에는 이탤릭이 없어(합성 기울임이 됨) 강조 단어도 기울이지 않는다 */
-:lang(ko) .eyebrow, :lang(ko) .note, :lang(ko) .skill-group h3, :lang(ko) .skills-toggle {
+:lang(ko) .eyebrow, :lang(ko) .note, :lang(ko) .skill-lane h3, :lang(ko) .skills-btn {
   font-family: var(--font-body);
   font-weight: 500;
   letter-spacing: -0.01em;

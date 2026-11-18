@@ -18,6 +18,7 @@
     "typescript": "^7.0.2"
   },
   "devDependencies": {
-    "@types/three": "^0.187.0"
+    "@types/three": "^0.187.0",
+    "simple-icons": "^16.38.0"
   }
 }

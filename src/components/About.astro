@@ -1,117 +1,329 @@
 ---
-// S6(ABOUT): 소개 문단 + 스킬. 스킬은 그룹별 <ul>이 원본(스크린리더, JS 꺼짐에서 그대로 보임)이고,
-// JS가 있으면 평소엔 목록을 시각적으로만 숨기고 이름 사본(.sf, 장식)을 배경에 띄운다. 버튼을 누르면 사본이 각 li 자리로 모인다.
-import { SKILL_GROUPS } from '../data/skills';
+// S6(ABOUT): 소개 글 + 스킬. 스킬의 원본은 그룹별 <ul>(스크린리더, JS 꺼짐에서 그대로 보임).
+// JS가 있으면: S6 전용 별 배경(canvas 2D)과 로고 배지 사본(aria-hidden)이 떠다니고, "스킬 보기"를 누르면
+// 소개 글이 다가오며 사라지고 사본이 스킬 화면(헤더 아래 고정 오버레이, 페이지 높이 불변)의 각 li 자리로 모인다.
+// 로고는 빌드 때 simple-icons에서 SVG path와 브랜드 색을 꺼내 인라인한다(클라이언트 번들에는 없음).
+import * as si from 'simple-icons';
+import type { SimpleIcon } from 'simple-icons';
+import { SKILL_GROUPS, type Skill } from '../data/skills';
 import type { getT } from '../i18n';
+import '../styles/about.css';
 interface Props { t: ReturnType<typeof getT> }
 const { t } = Astro.props;
 
-let n = 0;
-const groups = SKILL_GROUPS.map((g) => ({ id: g.id, items: g.items.map((name) => ({ name, i: n++ })) }));
-// 떠다니는 순서: 그룹을 돌아가며 하나씩(모바일에서 앞 24개만 보여도 네 그룹이 다 들어간다)
-const order: { name: string; i: number }[] = [];
-for (let k = 0; order.length < n; k++) for (const g of groups) if (g.items[k]) order.push(g.items[k]);
-// 고르게 흩어지는 고정값(할턴 수열): 매 빌드 같은 배치
-const halton = (i: number, b: number) => {
-  let f = 1, r = 0;
-  for (; i > 0; i = Math.floor(i / b)) r += (f /= b) * (i % b);
-  return r;
+const icons = si as unknown as Record<string, SimpleIcon>;
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// 브랜드 색 → 배지 로고 칸 배경: 채도 ≤ 0.65, 밝기 0.30~0.55. 거의 검정인 브랜드는 중립 칸
+const rgb = (hex: string) => [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+const toHsl = ([r, g, b]: number[]) => {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (!d) return [0, 0, l];
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, s, l];
 };
-const r2 = (v: number) => Math.round(v * 100) / 100;
-const floats = order.map((s, j) => {
-  const z = halton(j + 1, 5); // 깊이: 클수록 가깝다(크고, 조금 밝고, 빠르다). 글자 0.8~2.2rem, 주기 90~45초
-  const sx = j % 2 ? 1 : -1;
-  const sy = j % 3 ? 1 : -1;
-  const d = 90 - z * 45;
-  const style = [
-    `left:${r2(halton(j + 1, 2) * 86 + 2)}%`,
-    `top:${r2(halton(j + 1, 3) * 92 + 2)}%`,
-    `--fs:${r2(0.8 + z * 1.4)}rem`,
-    `--o:${r2(0.035 + z * 0.045)}`, // 문단 가독성 우선: 가장 가까운 것도 0.08
-    `--d:${r2(d)}s`,
-    `--dl:-${r2(halton(j + 1, 7) * d)}s`,
-    `--dx:${r2(sx * (2 + 4 * halton(j + 1, 11)))}vw`,
-    `--dy:${r2(sy * (2 + 4 * halton(j + 1, 13)))}vw`,
-  ].join(';');
-  return { ...s, style };
-});
+const fromHsl = (h: number, s: number, l: number) => {
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  return [0, 8, 4].map((n) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)));
+};
+const lum = (c: number[]) => c.map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+const logo = (s: Skill) => {
+  if (!s.icon) return `<span class="badge-logo mark">${esc(s.mark ?? s.name.slice(0, 2))}</span>`;
+  const ic = icons[`si${s.icon[0].toUpperCase()}${s.icon.slice(1)}`];
+  if (!ic) throw new Error(`simple-icons에 '${s.icon}' 없음`);
+  const [h, sat, l] = toHsl(rgb(ic.hex));
+  let bg = '#2b2e3a', fg = '#fff';
+  if (l >= 0.15) {
+    const c = fromHsl(h, Math.min(sat, 0.65), Math.min(0.55, Math.max(0.3, l)));
+    bg = `rgb(${c.map((v) => Math.round(v * 255)).join(' ')})`;
+    fg = lum(c) > 0.3 ? '#111' : '#fff';
+  }
+  return `<span class="badge-logo" style="background:${bg};color:${fg}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ic.path}"/></svg></span>`;
+};
+const badge = (s: Skill) => `<span class="badge">${logo(s)}<span class="badge-name">${esc(s.name)}</span></span>`;
+
+let n = 0;
+const groups = SKILL_GROUPS.map((g, gi) => ({ id: g.id, items: g.items.map((s) => ({ i: n++, g: gi, html: badge(s) })) }));
+// 떠다니는 순서: 그룹을 돌아가며 하나씩(모바일에서 앞 24개만 보여도 네 그룹이 다 들어간다)
+const floats: { i: number; g: number; html: string }[] = [];
+for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) floats.push(g.items[k]);
 ---
 <section id="s6" class="snap">
-  <div class="skills-float" aria-hidden="true">
-    {floats.map((f) => <span class="sf" data-i={f.i} style={f.style}><span>{f.name}</span></span>)}
+  <div class="s6-space" aria-hidden="true">
+    <canvas class="s6-stars"></canvas>
+    <div class="s6-badges">
+      {floats.map((f) => <span class="fl" data-i={f.i} data-g={f.g} set:html={f.html} />)}
+    </div>
   </div>
-  <div class="about">
-    <div class="about-head">
-      <h2 class="label about-label reveal" style="--i:0">{t.about}</h2>
-      <p class="about-lead display reveal" style="--i:1"><em>{t.aboutLead}</em></p>
+  <div class="s6-story">
+    <div class="about">
+      <div class="about-head">
+        <h2 class="label about-label reveal s6-out" style="--i:0;--k:0">{t.about}</h2>
+        <p class="about-lead display reveal s6-out" style="--i:1;--k:1"><em>{t.aboutLead}</em></p>
+      </div>
+      <div class="about-body">
+        {t.aboutBody.map((para, i) => <p class="reveal s6-out" style={`--i:${i + 2};--k:${i + 2}`}>{para}</p>)}
+        <button type="button" class="skills-btn skills-open reveal s6-out" style="--i:8;--k:8" aria-expanded="false" aria-controls="s6-skills" hidden>{t.skillsShow}</button>
+      </div>
     </div>
-    <div class="about-body">
-      {t.aboutBody.map((para, i) => <p class="reveal" style={`--i:${i + 2}`}>{para}</p>)}
-      <button type="button" class="skills-toggle reveal" style="--i:8" aria-expanded="false" aria-controls="skill-groups" data-show={t.skillsShow} data-hide={t.skillsHide} hidden>{t.skillsShow}</button>
-    </div>
-    <div id="skill-groups" class="skill-groups">
+  </div>
+  <div id="s6-skills" class="s6-skills" role="region" aria-label={t.skillsLabel}>
+    <div class="s6-skills-inner">
+      <button type="button" class="skills-btn skills-close" hidden>{t.skillsBack}</button>
       {groups.map((g) => (
-        <section class="skill-group">
+        <section class="skill-lane">
           <h3 class="label">{t.skillGroups[g.id]}</h3>
-          <ul>{g.items.map((s) => <li data-i={s.i}>{s.name}</li>)}</ul>
+          <ul>{g.items.map((s) => <li data-i={s.i} set:html={s.html} />)}</ul>
         </section>
       ))}
+      <p class="skills-tm">{t.skillsTrademark}</p>
     </div>
   </div>
 </section>
 
 <script>
   const sec = document.getElementById('s6');
-  const btn = sec?.querySelector<HTMLButtonElement>('.skills-toggle');
-  const layer = sec?.querySelector<HTMLElement>('.skills-float');
-  if (sec && btn && layer) {
-    document.documentElement.classList.add('skills-on');
-    btn.hidden = false;
-    const reduce = matchMedia('(prefers-reduced-motion: reduce)');
-    const MOVE = 800; // stage.css .sf transform 전환과 같은 값
-    const FADE = 300; // 사본 ↔ li 교차 페이드
-    const floats = [...layer.querySelectorAll<HTMLElement>('.sf')];
-    const items = new Map([...sec.querySelectorAll<HTMLElement>('.skill-groups li')].map((li) => [li.dataset.i, li]));
-    let open = false;
-    let timer = 0;
-    // 화면 밖이면 떠다니는 애니메이션을 멈춘다(-2px: S5에 있을 때 화면 아래 가장자리에 맞닿은 S6를 보이는 것으로 치지 않게)
-    new IntersectionObserver(([e]) => sec.classList.toggle('skills-idle', !e.isIntersecting), { rootMargin: '-2px 0px' }).observe(sec);
+  const story = sec?.querySelector<HTMLElement>('.s6-story');
+  const panel = document.getElementById('s6-skills');
+  const openBtn = sec?.querySelector<HTMLButtonElement>('.skills-open');
+  const closeBtn = sec?.querySelector<HTMLButtonElement>('.skills-close');
+  const canvas = sec?.querySelector<HTMLCanvasElement>('.s6-stars');
+  const layer = sec?.querySelector<HTMLElement>('.s6-badges');
+  const ctx = canvas?.getContext('2d');
+  if (sec && story && panel && openBtn && closeBtn && canvas && layer && ctx) {
+    const root = document.documentElement;
+    root.classList.add('skills-on');
+    openBtn.hidden = closeBtn.hidden = false;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const narrow = () => matchMedia('(max-width: 899px)').matches;
+    const nav = document.querySelector<HTMLElement>('.section-nav');
+    const MOVE = 900; // 배지 이동
+    const STAGGER = 60; // 그룹 순서 시차
+    const FADE = 250; // 사본 ↔ li 교차 페이드
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
-    btn.addEventListener('click', () => {
-      open = !open;
-      btn.setAttribute('aria-expanded', String(open));
-      btn.textContent = (open ? btn.dataset.hide : btn.dataset.show) ?? '';
-      clearTimeout(timer);
-      if (reduce.matches) {
-        // 떠다니는 레이어 없음: 정적 목록만 토글
-        sec.classList.toggle('is-open', open);
-        sec.classList.toggle('is-done', open);
+    // --- 별(canvas 2D): 두 겹 시차 + 아주 느린 반짝임. S5 점 구름보다 작고 차갑다 ---
+    const COLORS = ['#e6ecff', '#cfd8ff', '#b8c6ff', '#9fb2ff'];
+    let W = 0, H = 0;
+    let stars: { x: number; y: number; r: number; a: number; k: number; w: number; p: number; v: number; c: string }[] = [];
+    const sizeStars = () => {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      W = canvas.clientWidth;
+      H = canvas.clientHeight;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const count = narrow() ? 64 : 120;
+      stars = Array.from({ length: count }, () => {
+        const near = Math.random() < 0.3;
+        return {
+          x: rnd(0, W), y: rnd(0, H),
+          r: near ? rnd(0.8, 1.3) : rnd(0.4, 0.8),
+          a: near ? rnd(0.35, 0.6) : rnd(0.2, 0.45),
+          k: near ? 0.12 : 0.04, // S6 안 스크롤 양에 대한 시차
+          v: near ? rnd(2, 3) : rnd(1, 2), // 자체 표류 px/s
+          w: rnd(0.2, 0.6), p: rnd(0, Math.PI * 2),
+          c: COLORS[Math.floor(Math.random() * COLORS.length)],
+        };
+      });
+    };
+    const drawStars = (t: number) => {
+      const off = -sec.getBoundingClientRect().top;
+      ctx.clearRect(0, 0, W, H);
+      for (const s of stars) {
+        const y = (((s.y - off * s.k - s.v * t) % H) + H) % H;
+        ctx.globalAlpha = s.a * (reduce ? 1 : 0.7 + 0.3 * Math.sin(s.w * t + s.p));
+        ctx.fillStyle = s.c;
+        ctx.beginPath();
+        ctx.arc(s.x, y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    // --- 떠다니는 배지 사본: 배지마다 독립된 느린 곡선 경로(방향이 천천히 휜다), 깊이에 따라 크기·속도·투명도 ---
+    type Fl = { el: HTMLElement; li: HTMLElement; g: number; w: number; h: number; x: number; y: number; z: number; th: number; o1: number; p1: number; o2: number; p2: number; r: number; s: number; op: number };
+    const items = new Map([...panel.querySelectorAll<HTMLElement>('li')].map((li) => [li.dataset.i, li]));
+    let fls: Fl[] = [];
+    const floatTransform = (f: Fl) => `translate3d(${f.x.toFixed(1)}px, ${f.y.toFixed(1)}px, 0) rotate(${f.r.toFixed(2)}deg) scale(${f.s.toFixed(3)})`;
+    const initBadges = () => {
+      const BW = layer.clientWidth, BH = layer.clientHeight;
+      fls = [...layer.querySelectorAll<HTMLElement>('.fl')]
+        .filter((el) => el.offsetParent) // 모바일에서 숨긴 사본 제외
+        .map((el) => {
+          const z = Math.random();
+          const f: Fl = {
+            el, li: items.get(el.dataset.i)!, g: Number(el.dataset.g), w: el.offsetWidth, h: el.offsetHeight,
+            x: rnd(-40, BW), y: rnd(-20, BH), z, th: rnd(0, Math.PI * 2),
+            o1: rnd(0.04, 0.12), p1: rnd(0, 6.3), o2: rnd(0.1, 0.25), p2: rnd(0, 6.3),
+            r: 0, s: 0.5 + 0.45 * z, op: 0.1 + 0.18 * z, // 먼 것 0.1, 가까운 것 0.28(0.35는 문단 뒤 로고 칸 색이 읽기를 방해했다)
+          };
+          el.style.zIndex = String(Math.round(z * 100));
+          el.style.opacity = String(f.op);
+          el.style.transform = floatTransform(f);
+          return f;
+        });
+    };
+    let bt = 0; // 배지 시간(스킬 화면이 열린 동안은 멈춤)
+    const moveBadges = (dt: number) => {
+      bt += dt;
+      const BW = layer.clientWidth, BH = layer.clientHeight;
+      for (const f of fls) {
+        const th = f.th + 0.7 * Math.sin(f.o1 * bt + f.p1);
+        const v = 6 + 20 * f.z; // px/s: 먼 것은 느리게
+        f.x += Math.cos(th) * v * dt;
+        f.y += Math.sin(th) * v * dt;
+        f.r = 6 * Math.sin(f.o2 * bt + f.p2);
+        // 화면 밖으로 완전히 나가면 반대편 밖에서 다시 들어온다(감기는 순간이 안 보이게 배지 크기만큼 여유)
+        const mx = f.w, my = f.h;
+        if (f.x > BW + mx) f.x = -2 * mx;
+        else if (f.x < -2 * mx) f.x = BW + mx;
+        if (f.y > BH + my) f.y = -2 * my;
+        else if (f.y < -2 * my) f.y = BH + my;
+        f.el.style.transform = floatTransform(f);
+      }
+    };
+
+    // --- 루프: S6가 화면에 있을 때만 ---
+    let state: 'closed' | 'opening' | 'open' | 'closing' = 'closed';
+    let visible = false, raf = 0, last = 0, t = 0;
+    const frame = (now: number) => {
+      raf = requestAnimationFrame(frame);
+      const dt = Math.min((now - last) / 1000, 1 / 30);
+      last = now;
+      t += dt;
+      drawStars(t);
+      if (state === 'closed') moveBadges(dt);
+    };
+    const run = () => {
+      if (reduce || !visible || raf) return;
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    };
+    const halt = () => {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    };
+    new IntersectionObserver(([e]) => {
+      visible = e.isIntersecting;
+      if (visible) run();
+      else halt();
+    }, { rootMargin: '-2px 0px' }).observe(sec);
+    const setup = () => {
+      sizeStars();
+      drawStars(t);
+      if (!reduce && state === 'closed') initBadges();
+    };
+    setup();
+    let rt = 0;
+    addEventListener('resize', () => {
+      clearTimeout(rt);
+      rt = window.setTimeout(setup, 150);
+    });
+
+    // --- 스크롤 잠금 ---
+    let savedY = 0;
+    const guard = (e: Event) => {
+      if (state !== 'closed' && !(e.target instanceof Node && panel.contains(e.target))) e.preventDefault();
+    };
+    addEventListener('wheel', guard, { passive: false });
+    addEventListener('touchmove', guard, { passive: false });
+    const lock = () => {
+      const top = sec.getBoundingClientRect().top + scrollY;
+      if (scrollY < top) scrollTo({ top, behavior: 'instant' }); // S6가 화면을 다 덮은 상태에서 연다
+      savedY = scrollY;
+      root.classList.add('skills-lock');
+      if (nav) nav.inert = true;
+    };
+    const unlock = () => {
+      root.classList.remove('skills-lock');
+      scrollTo({ top: savedY, behavior: 'instant' });
+      if (nav) nav.inert = false;
+    };
+
+    // --- 열기 / 닫기 ---
+    const timers: number[] = [];
+    const later = (fn: () => void, ms: number) => timers.push(window.setTimeout(fn, ms));
+    const delay = (f: Fl) => f.g * STAGGER;
+    const open = () => {
+      if (state !== 'closed') return;
+      state = 'opening';
+      lock();
+      openBtn.setAttribute('aria-expanded', 'true');
+      sec.classList.add('is-open');
+      story.inert = true;
+      story.setAttribute('aria-hidden', 'true');
+      closeBtn.focus({ preventScroll: true });
+      if (reduce) {
+        sec.classList.add('is-landed');
+        state = 'open';
         return;
       }
-      if (open) {
-        layer.style.height = `${layer.offsetHeight}px`; // 목록이 펼쳐져 S6가 길어져도 사본의 % 위치가 바뀌지 않게
-        sec.classList.add('is-open'); // 목록이 흐름에 들어오고(li 투명), 드리프트는 현재 자리에서 멈춘다
-        for (const f of floats) {
-          const li = items.get(f.dataset.i);
-          const word = f.firstElementChild as HTMLElement;
-          if (!li || !f.offsetParent) continue; // 모바일에서 숨긴 사본은 li가 그냥 나타난다
-          f.style.transform = '';
-          const o = f.getBoundingClientRect();
-          const a = word.getBoundingClientRect();
-          const b = li.getBoundingClientRect();
-          const s = parseFloat(getComputedStyle(li).fontSize) / parseFloat(getComputedStyle(word).fontSize);
-          // 원점(o) 기준 scale이라 드리프트 오프셋(a - o)도 s배가 된다
-          f.style.transform = `translate(${b.left - o.left - s * (a.left - o.left)}px, ${b.top - o.top - s * (a.top - o.top)}px) scale(${s})`;
-        }
-        timer = window.setTimeout(() => sec.classList.add('is-done'), MOVE);
-      } else {
-        sec.classList.remove('is-done'); // 사본이 li 자리에 다시 보이고 li는 사라진다
-        timer = window.setTimeout(() => {
-          for (const f of floats) f.style.transform = '';
-          sec.classList.remove('is-open');
-          timer = window.setTimeout(() => (layer.style.height = ''), MOVE);
-        }, FADE);
+      const base = layer.getBoundingClientRect();
+      for (const f of fls) {
+        const b = (f.li.firstElementChild as HTMLElement).getBoundingClientRect();
+        f.el.style.transition = `transform ${MOVE}ms cubic-bezier(0.65, 0, 0.25, 1) ${delay(f)}ms, opacity ${MOVE}ms ease ${delay(f)}ms`;
+        f.el.style.transform = `translate3d(${b.left - base.left}px, ${b.top - base.top}px, 0)`;
+        f.el.style.opacity = '1';
       }
+      later(() => {
+        sec.classList.add('is-landed'); // li 보이기, 사본은 사라진다
+        for (const f of fls) {
+          f.el.style.transition = `opacity ${FADE}ms ease`;
+          f.el.style.opacity = '0';
+        }
+        state = 'open';
+      }, MOVE + 3 * STAGGER);
+    };
+    const close = () => {
+      if (state !== 'open') return;
+      state = 'closing';
+      openBtn.setAttribute('aria-expanded', 'false');
+      const done = () => {
+        sec.classList.remove('is-closing');
+        unlock();
+        story.inert = false;
+        story.removeAttribute('aria-hidden');
+        state = 'closed';
+        openBtn.focus({ preventScroll: true });
+      };
+      if (reduce) {
+        sec.classList.remove('is-open', 'is-landed');
+        done();
+        return;
+      }
+      // 오버레이 안에서 스크롤했다면 li 자리가 바뀌었으니 사본을 지금 자리로 옮겨 둔 뒤 보인다
+      const base = layer.getBoundingClientRect();
+      for (const f of fls) {
+        const b = (f.li.firstElementChild as HTMLElement).getBoundingClientRect();
+        f.el.style.transition = 'none';
+        f.el.style.transform = `translate3d(${b.left - base.left}px, ${b.top - base.top}px, 0)`;
+      }
+      void layer.offsetWidth;
+      sec.classList.remove('is-landed');
+      for (const f of fls) {
+        f.el.style.transition = `opacity ${FADE}ms ease`;
+        f.el.style.opacity = '1';
+      }
+      later(() => {
+        sec.classList.remove('is-open');
+        sec.classList.add('is-closing'); // 소개 글이 제자리로 돌아온다(역시차)
+        for (const f of fls) {
+          f.el.style.transition = `transform ${MOVE}ms cubic-bezier(0.65, 0, 0.25, 1) ${(3 - f.g) * STAGGER}ms, opacity ${MOVE}ms ease ${(3 - f.g) * STAGGER}ms`;
+          f.el.style.transform = floatTransform(f); // 열기 직전의 부유 상태(배지 시간은 멈춰 있었다)
+          f.el.style.opacity = String(f.op);
+        }
+        later(() => {
+          for (const f of fls) f.el.style.transition = '';
+          done();
+        }, MOVE + 3 * STAGGER + 400); // 소개 글 복귀(최대 지연 550ms + 0.8s)까지 기다린다
+      }, FADE);
+    };
+    openBtn.addEventListener('click', open);
+    closeBtn.addEventListener('click', close);
+    addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state === 'open') close();
     });
   }
 </script>
