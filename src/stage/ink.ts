@@ -15,17 +15,19 @@ const FADE_MS = 400;
 const BLUR_EM = [0.035, 0.07]; // 글자 높이 지도 흐림 반경(글자 크기 비율): 작은 것(R, 윤곽 ≈ 0.5), 큰 것(G)
 const DPR_CAP = 1.5;
 const FIELD_SCALE = 0.25; // 마스크 필드 해상도(캔버스 픽셀 대비)
-const RADIUS_VW = [0.07, 0.11]; // 보이는 반경: 뷰포트 폭 비율(느림 → 빠름)
-const SPEED_MAX = 1200; // px/s: 이 속도에서 최대 반경, 튄 물감 최대
+const RADIUS_VW = 0.07; // 보이는 반경(붓 굵기의 절반): 뷰포트 폭 비율. 속도와 무관하게 고정
+const SPEED_MAX = 1200; // px/s: 이 속도에서 튄 물감 최대
 const SPLAT_EVERY = 45; // 최대 속도에서 이 거리(px)마다 튄 물방울 1개. 느릴수록 속도 비율만큼 줄어든다
 const SPLAT_MAX = 6; // 이동 1번당 물방울 상한
 const SPLAT_SIZE = [0.05, 0.6]; // 물방울 반경: 메인 반경 비율(작은 쪽이 많다)
+const SPLAT_GAP = 1.2; // 물방울 중심과 궤적 중심선의 최소 거리 = SPLAT_GAP × 반경 + 물방울 반경
 const KEEP_RATE = 0.4; // 필드 감쇠: f × e^(−KEEP_RATE·t) − SUB_RATE·t. 약 1.8초 뒤 임계 아래로
 const SUB_RATE = 0.12;
 const BLUR_RATE = 12; // 블러 세기(1/s)
 const VIS_LIFE = 1.9; // 스탬프가 보이는 시간(초). 면적 추정용
 const STOP_MS = 2400; // 마지막 스탬프 뒤 이 시간이 지나면 필드를 지우고 루프를 멈춘다(보이는 잉크는 그 전에 이미 0%)
-const AREA_CAP = 0.35; // 잉크 면적 상한(화면 비율). 넘으면 스탬프 세기를 임계 아래로 줄인다
+const AREA_CAP = 0.35; // 잉크 면적 상한(화면 비율). 굵기·세기는 깎지 않고 소멸 속도로만 제어한다
+const DECAY_BOOST = 2.5; // 추정 면적이 상한에 닿았을 때의 감쇠 배율(상한의 60%부터 선형으로 1 → 2.5)
 const SHADOW_PX = [7, 10]; // 그림자 오프셋(오른쪽, 아래)
 const IDLE_MS = 2500; // 포인터 입력이 이만큼 없으면 자동 스윕 가능
 const SWEEP_GAP_MS = 14000;
@@ -74,7 +76,7 @@ export function initInk(canvas: HTMLCanvasElement): void {
   if (!fieldProg || !compProg) return;
   const locs = (p: WebGLProgram, names: string[]) => Object.fromEntries(names.map((n) => [n, gl.getUniformLocation(p, n)]));
   const uf = locs(fieldProg, ['uPrev', 'uTexel', 'uSize', 'uBlur', 'uKeep', 'uSub', 'uCount', 'uSeg', 'uRS']);
-  const uc = locs(compProg, ['uField', 'uText', 'uSize', 'uTexel', 'uShadowOff', 'uFlow', 'uTime', 'uBg', 'uFg', 'uShadow', 'uMode', 'uStyleA', 'uStyleB', 'uStyleMix', 'uLetters', 'uLetterCount', 'uSmoke']);
+  const uc = locs(compProg, ['uField', 'uText', 'uSize', 'uTexel', 'uFieldTexel', 'uShadowOff', 'uFlow', 'uTime', 'uBg', 'uFg', 'uShadow', 'uMode', 'uStyleA', 'uStyleB', 'uStyleMix', 'uLetters', 'uLetterCount', 'uSmoke']);
 
   // --- 색: CSS 변수(--hero-bg, --hero-fg)를 2D 캔버스로 정규화해서 읽는다 ---
   const rgb = (css: string, fallback: string) => {
@@ -166,6 +168,8 @@ export function initInk(canvas: HTMLCanvasElement): void {
   const areaPx = new Float32Array(AREA_SLOTS);
   let areaHead = 0;
   let areaEst = 0;
+  let decayClock = 0; // 감쇠 시계(초): 프레임마다 dt × 감쇠 배율만큼 간다
+  let decayK = 1; // 이번 프레임 감쇠 배율
   const pointer = newPen();
   const sweepPen = newPen();
   // name 모드 스타일: 새 세션마다 다음 스타일(시작 −1 → 첫 자동 스윕은 0), 긴 세션은 크로스페이드
@@ -201,35 +205,29 @@ export function initInk(canvas: HTMLCanvasElement): void {
     }
   };
 
-  const estimate = (now: number) => {
+  // 나이는 감쇠 시계(실제 시간 × 감쇠 배율)로 잰다: 감쇠가 빨라진 만큼 추정도 빨리 줄어든다
+  const estimate = () => {
     let sum = 0;
     for (let i = 0; i < AREA_SLOTS; i++) {
-      const age = (now - areaBorn[i]) / 1000 / VIS_LIFE;
+      const age = (decayClock - areaBorn[i]) / VIS_LIFE;
       if (age < 1) sum += areaPx[i] * (1 - age);
     }
     return sum / (w * h);
   };
-  const addArea = (px: number, now: number) => {
-    areaBorn[areaHead] = now;
+  const addArea = (px: number) => {
+    areaBorn[areaHead] = decayClock;
     areaPx[areaHead] = px;
     areaHead = (areaHead + 1) % AREA_SLOTS;
   };
+  // 면적 상한: 굵기와 세기는 그대로 두고, 추정 면적이 상한의 60%를 넘으면 필드 감쇠를 최대 DECAY_BOOST배까지 빠르게 한다
+  const decayRate = () => 1 + (DECAY_BOOST - 1) * clamp01((areaEst / AREA_CAP - 0.6) / 0.4);
 
-  const capStrength = () => 1 - 0.75 * clamp01((areaEst / AREA_CAP - 1) / 0.15);
-  const capRadius = () => 1 - 0.5 * clamp01((areaEst / AREA_CAP - 0.6) / 0.4);
-
-  /** 스탬프 1개(선분 a→b, 보이는 반경 vis). 한 프레임에 MAX_STAMPS를 넘으면 마지막 선분을 늘린다 */
+  /** 스탬프 1개(선분 a→b, 보이는 반경 vis, 세기 1). 한 프레임에 MAX_STAMPS를 넘으면 마지막 선분을 늘린다 */
   const stamp = (x0: number, y0: number, x1: number, y1: number, vis: number, now: number, dot: boolean) => {
-    // 면적 상한: 상한의 60%부터는 반경을 줄이고(moveTo), 상한을 넘으면 세기를 임계(0.46) − 노이즈 아래로 내린다.
-    // 빠르게 움직이는 동안에도 마스크가 진하게 보이도록 세기는 마지막에만 깎는다
-    const s = capStrength();
-    const shown = clamp01((s - 0.3) / 0.7);
     const len = Math.hypot(x1 - x0, y1 - y0);
-    addArea((len * 2 * vis + (dot ? Math.PI * vis * vis : 0)) * shown, now);
-    if (shown > 0) {
-      if (now - lastStamp > EMPTY_MS) newSession(now);
-      lastStamp = now;
-    }
+    addArea(len * 2 * vis + (dot ? Math.PI * vis * vis : 0));
+    if (now - lastStamp > EMPTY_MS) newSession(now);
+    lastStamp = now;
     let k = stamps;
     if (k === MAX_STAMPS) {
       overflow++;
@@ -244,10 +242,10 @@ export function initInk(canvas: HTMLCanvasElement): void {
     seg[k * 4 + 2] = x1;
     seg[k * 4 + 3] = y1;
     rs[k * 2] = vis * 2; // 커널 반경: 값이 반경의 절반에서 0.5(임계)
-    rs[k * 2 + 1] = s;
+    rs[k * 2 + 1] = 1;
   };
 
-  /** 펜을 (x, y)로 옮기며 스탬프를 찍는다. fixedSpeed를 주면 속도와 무관한 반경 */
+  /** 펜을 (x, y)로 옮기며 스탬프를 찍는다. 반경은 속도와 무관하게 고정. fixedSpeed는 튄 물감 양에만 쓴다 */
   const moveTo = (pen: Pen, x: number, y: number, now: number, fixedSpeed = -1) => {
     if (!ready || dead) return;
     const first = !pen.has;
@@ -261,7 +259,7 @@ export function initInk(canvas: HTMLCanvasElement): void {
       flowVY += (dy / dtp / Math.min(w, h) - flowVY) * 0.2;
     }
     const speed = fixedSpeed >= 0 ? fixedSpeed : pen.speed;
-    const vis = w * (RADIUS_VW[0] + (RADIUS_VW[1] - RADIUS_VW[0]) * clamp01(speed / SPEED_MAX)) * capRadius();
+    const vis = w * RADIUS_VW;
     stamp(first ? x : pen.x, first ? y : pen.y, x, y, vis, now, first);
     // 튄 물감: 속도에 비례한 개수를 진행 방향 앞·옆으로 던진다. 제자리에 찍히고 필드 감쇠로 사라진다
     if (dist > 0) dropAcc = Math.min(SPLAT_MAX, dropAcc + (dist / SPLAT_EVERY) * clamp01(speed / SPEED_MAX));
@@ -272,7 +270,8 @@ export function initInk(canvas: HTMLCanvasElement): void {
       const r = vis * (SPLAT_SIZE[0] + (SPLAT_SIZE[1] - SPLAT_SIZE[0]) * u * u);
       const far = 1 - u * u * 0.6; // 작은 방울일수록 멀리
       const ahead = vis * (0.2 + 1.6 * Math.random()) * far;
-      const side = (Math.random() < 0.5 ? -1 : 1) * vis * (0.9 + 1.4 * Math.random()) * far;
+      // 궤적 가장자리(vis)에 붙어 돌기가 되지 않게: 중심선에서 SPLAT_GAP × vis + r 이상 떨어뜨린다
+      const side = (Math.random() < 0.5 ? -1 : 1) * (SPLAT_GAP * vis + r + vis * 1.1 * Math.random() * far);
       const ox = x + ux * ahead - uy * side;
       const oy = y + uy * ahead + ux * side;
       stamp(ox, oy, ox, oy, r, now, true);
@@ -295,8 +294,8 @@ export function initInk(canvas: HTMLCanvasElement): void {
     gl.uniform2f(uf.uTexel, 1 / fw, 1 / fh);
     gl.uniform2f(uf.uSize, w, h);
     gl.uniform1f(uf.uBlur, 1 - Math.exp(-BLUR_RATE * dt));
-    gl.uniform1f(uf.uKeep, Math.exp(-KEEP_RATE * dt));
-    gl.uniform1f(uf.uSub, SUB_RATE * dt);
+    gl.uniform1f(uf.uKeep, Math.exp(-KEEP_RATE * dt * decayK));
+    gl.uniform1f(uf.uSub, SUB_RATE * dt * decayK);
     gl.uniform1i(uf.uCount, stamps);
     gl.uniform4fv(uf.uSeg, seg);
     gl.uniform2fv(uf.uRS, rs);
@@ -313,6 +312,7 @@ export function initInk(canvas: HTMLCanvasElement): void {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, textTex);
     gl.uniform2f(uc.uSize, w, h);
+    gl.uniform2f(uc.uFieldTexel, 1 / fw, 1 / fh);
     gl.uniform2f(uc.uShadowOff, SHADOW_PX[0] / w, -SHADOW_PX[1] / h);
     gl.uniform2f(uc.uFlow, flowX, flowY);
     gl.uniform1f(uc.uTime, time);
@@ -435,14 +435,16 @@ export function initInk(canvas: HTMLCanvasElement): void {
     flowY += flowVY * dt * 0.12;
     flowVX *= Math.exp(-2 * dt);
     flowVY *= Math.exp(-2 * dt);
-    areaEst = estimate(now);
+    decayK = decayRate();
+    decayClock += dt * decayK;
+    areaEst = estimate();
     stepStyle(now);
     fieldPass(dt);
     composite();
 
     if (DEBUG && now >= nextReport) {
       nextReport = now + 250;
-      debugLine('ink', `ink run  ${label()}  area~${Math.round(areaEst * 100)}%  cap s ${capStrength().toFixed(2)} r ${capRadius().toFixed(2)}  full ${overflow}  ${useHalf ? 'R16F' : 'RGBA8'}`);
+      debugLine('ink', `ink run  ${label()}  area~${Math.round(areaEst * 100)}%  decay ×${decayK.toFixed(2)}  full ${overflow}  ${useHalf ? 'R16F' : 'RGBA8'}`);
     }
     if (sweepStart < 0 && now - lastStamp > STOP_MS) {
       // 필드는 이미 임계 아래다. 0으로 지우고 깨끗한 프레임(배경 + 검정 글자)을 남긴 뒤 멈춘다

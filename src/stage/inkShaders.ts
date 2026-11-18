@@ -11,6 +11,13 @@ void main() {
 
 export const MAX_STAMPS = 24;
 
+// 마스크 가장자리(합성 셰이더): 임계를 흔드는 노이즈는 저주파 위주·낮은 진폭(뾰족한 돌기를 줄이되 완전한 원은 아니게),
+// 임계 smoothstep은 0.5 ± EDGE_SOFT, 임계 전에 필드를 EDGE_BLUR(필드 텍셀) 거리의 5탭으로 한 번 더 흐려 가는 돌기를 뭉친다
+const EDGE_NOISE = { freq: [5, 9], weight: [0.75, 0.25], amp: 0.1 };
+const EDGE_SOFT = 0.07;
+const EDGE_BLUR = 1.5;
+const f1 = (x: number) => x.toFixed(3); // GLSL float 리터럴
+
 // 마스크 필드 갱신(저해상도 ping-pong): 약한 블러 → 감쇠(곱 + 선형) → 이번 프레임의 캡슐 스탬프를 max로 누적.
 // 선형 감쇠항이 8비트 텍스처에서도 값이 0까지 내려가게 한다.
 export const fieldFrag = /* glsl */ `#version 300 es
@@ -86,6 +93,7 @@ uniform sampler2D uField;
 uniform sampler2D uText;
 uniform vec2 uSize;      // CSS px
 uniform vec2 uTexel;     // 글자 텍스처 1픽셀(uv)
+uniform vec2 uFieldTexel; // 필드 텍스처 1픽셀(uv)
 uniform vec2 uShadowOff; // uv 단위
 uniform vec2 uFlow;      // 포인터 이동이 끌어당긴 흐름 오프셋
 uniform float uTime;
@@ -200,16 +208,19 @@ vec3 nameInk(vec2 uv, vec4 t, vec2 p) {
 
 void main() {
   vec2 p = vUv * uSize / min(uSize.x, uSize.y);
-  float f = texture(uField, vUv).r;
+  vec2 bo = uFieldTexel * ${f1(EDGE_BLUR)};
+  float f = (texture(uField, vUv).r * 2.0 + texture(uField, vUv + bo).r + texture(uField, vUv - bo).r
+           + texture(uField, vUv + vec2(bo.x, -bo.y)).r + texture(uField, vUv - vec2(bo.x, -bo.y)).r) / 6.0;
   float fs = texture(uField, vUv - uShadowOff).r;
   vec4 t = texture(uText, vUv);
   vec3 col = uBg;
   float m = 0.0;
   if (max(f, fs) > 0.2) {
-    // 가장자리 노이즈: 임계를 흔들어 메타볼처럼 울퉁불퉁하게, 꼬리는 물방울로 끊기게
-    float n = snoise(p * 9.0 + vec2(uTime * 0.25, 0.0)) * 0.65 + snoise(p * 17.0 - vec2(0.0, uTime * 0.35)) * 0.35;
-    m = smoothstep(0.46, 0.54, f + n * 0.16);
-    float sh = smoothstep(0.3, 0.62, fs + n * 0.16) * (1.0 - m);
+    // 가장자리 노이즈: 임계를 낮은 주파수로 흔들어 약간 울퉁불퉁한 붓 자국(상수는 파일 위 EDGE_*)
+    float n = snoise(p * ${f1(EDGE_NOISE.freq[0])} + vec2(uTime * 0.25, 0.0)) * ${f1(EDGE_NOISE.weight[0])}
+            + snoise(p * ${f1(EDGE_NOISE.freq[1])} - vec2(0.0, uTime * 0.35)) * ${f1(EDGE_NOISE.weight[1])};
+    m = smoothstep(${f1(0.5 - EDGE_SOFT)}, ${f1(0.5 + EDGE_SOFT)}, f + n * ${f1(EDGE_NOISE.amp)});
+    float sh = smoothstep(0.3, 0.62, fs + n * ${f1(EDGE_NOISE.amp)}) * (1.0 - m);
     col = mix(col, uShadow, sh * 0.55);
   }
   vec3 outside = mix(col, uFg, t.b);
