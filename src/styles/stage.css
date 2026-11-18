@@ -96,6 +96,7 @@ main.stage-main {
 .books-on .project-list { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* 캐러셀: 가로 스와이프는 책이, 세로 스와이프는 스냅 스크롤이 받는다 */
 .books-on #s5 { touch-action: pan-y; user-select: none; }
+@media (pointer: coarse) { .books-on #s5 { cursor: pointer; } } /* iOS Safari가 탭 대상을 클릭 가능한 요소로 보게 하는 보조 장치(판정은 pointerup) */
 .book-nav { display: none; }
 .books-on .book-nav { display: flex; gap: 0.75rem; position: absolute; left: 50%; bottom: 2.5rem; transform: translateX(-50%); z-index: 1; }
 .book-nav button {
@@ -267,5 +268,6 @@ main.stage-main {
   pointer-events: none;
 }
 #stage-debug pre, #stage-debug p { margin: 0; font: inherit; }
+#stage-debug pre { white-space: pre-wrap; max-width: calc(100vw - 3rem); } /* 폰에서도 books/touch 줄이 잘리지 않게 */
 #stage-debug a { pointer-events: auto; padding: 0 0.25rem; }
 #stage-debug a[aria-current] { color: var(--text); }

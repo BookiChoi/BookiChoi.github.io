@@ -43,6 +43,10 @@ const YAW = 3;
 const SCALE = 4;
 const CH = 5;
 const DRAG_PX = 6; // 이만큼 넘게 움직이면 드래그(클릭 전환 안 함)
+// 모바일 탭: click에 기대지 않고 pointerup으로 판정한다(iOS는 클릭 불가 요소의 탭에 click을 안 보낼 수 있다)
+const TAP_PX = 16; // 터치 이동 허용치(CSS px, 가로·세로 합친 거리). 이 이하면 탭, 넘으면 캐러셀 드래그
+const TAP_MS = 500; // 이보다 오래 누르면 탭이 아니다
+const TAP_NEAR_PX = 24; // 레이캐스트가 빗나가도 실제 책 화면 사각형에서 이 거리 안이면 가장 가까운 책
 
 type Mode = 'rest' | 'drag' | 'inertia' | 'snap' | 'wheel';
 
@@ -186,6 +190,11 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   let tipX = -1;
   let tipY = -1;
   let reportIn = 0;
+  let tapId = -1; // 모바일 탭: 누른 pointerId, 위치, 시각
+  let tapX = 0;
+  let tapY = 0;
+  let tapT = 0;
+  let touchState = '-'; // debug 표시: 마지막 이벤트, 이동량, 판정
   const ndc = new Vector2();
   const v = new Vector3();
   const raycaster = new Raycaster();
@@ -198,6 +207,46 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     v.copy(raycaster.ray.direction).multiplyScalar(-raycaster.ray.origin.z / raycaster.ray.direction.z).add(raycaster.ray.origin);
     pointerX = v.x;
     return hit ? real.indexOf(hit.object as Mesh) : -1;
+  };
+
+  /** 실제 책 k의 화면 사각형(CSS px, 박스 8모서리 투영). 숨어 있으면 null */
+  const rect = new Float32Array(4);
+  const screenRect = (k: number): Float32Array | null => {
+    const mesh = real[k];
+    if (!mesh || !mesh.visible) return null;
+    mesh.updateMatrixWorld();
+    rect[0] = rect[1] = Infinity;
+    rect[2] = rect[3] = -Infinity;
+    for (let c = 0; c < 8; c++) {
+      v.set(((c & 1 ? 1 : -1) * P.size[0]) / 2, ((c & 2 ? 1 : -1) * P.size[1]) / 2, ((c & 4 ? 1 : -1) * P.size[2]) / 2)
+        .applyMatrix4(mesh.matrixWorld)
+        .project(camera);
+      const px = (v.x * 0.5 + 0.5) * innerWidth;
+      const py = (0.5 - v.y * 0.5) * innerHeight;
+      rect[0] = Math.min(rect[0], px);
+      rect[1] = Math.min(rect[1], py);
+      rect[2] = Math.max(rect[2], px);
+      rect[3] = Math.max(rect[3], py);
+    }
+    return rect;
+  };
+
+  /** 모바일 탭 판정: 레이캐스트 → 빗나가면 화면 사각형까지 거리가 TAP_NEAR_PX 이내인 가장 가까운 실제 책(장식 책은 real에 없다) */
+  const pickNear = (x: number, y: number) => {
+    const hit = pick(x, y);
+    if (hit >= 0) return hit;
+    let best = -1;
+    let bestD = TAP_NEAR_PX;
+    for (let k = 0; k < real.length; k++) {
+      const r = screenRect(k);
+      if (!r) continue;
+      const d = Math.hypot(Math.max(r[0] - x, 0, x - r[2]), Math.max(r[1] - y, 0, y - r[3]));
+      if (d <= bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    return best;
   };
 
   const showTip = (k: number) => {
@@ -303,8 +352,9 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       const now = performance.now();
       if (down) {
         const dx = e.clientX - downX;
-        if (mode !== 'drag' && Math.abs(dx) > DRAG_PX) {
-          mode = 'drag'; // 6px를 넘으면 드래그: 놓은 뒤의 클릭은 전환하지 않는다
+        const lim = opts.mobile && e.pointerType !== 'mouse' ? TAP_PX : DRAG_PX; // 터치는 탭 허용치를 넘어야 드래그
+        if (mode !== 'drag' && Math.abs(dx) > lim) {
+          mode = 'drag'; // 허용치를 넘으면 드래그: 놓은 뒤의 클릭은 전환하지 않는다
           suppressClick = true;
           hover = -1;
           pointerOn = false;
@@ -328,18 +378,14 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   addEventListener(
     'click',
     (e) => {
-      if (suppressClick) {
-        suppressClick = false;
+      if (suppressClick || opts.mobile) {
+        suppressClick = false; // 모바일 이동은 아래 #s5의 pointerup 탭 판정이 맡는다
         return;
       }
       if (!active || picked >= 0 || ignoreTarget(e.target)) return;
       const k = pick(e.clientX, e.clientY);
       const book = items[k];
       if (!book) return;
-      if (opts.mobile) {
-        location.href = book.href; // 모바일은 전환 없이 바로 이동
-        return;
-      }
       picked = k;
       hover = -1;
       showTip(-1);
@@ -350,6 +396,51 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     },
     { signal },
   );
+  // 모바일 탭: #s5에 직접 건다. down 위치/시각 → up에서 이동량 ≤ 허용치, 누른 시간 ≤ TAP_MS, 드래그 아님이면 전환 없이 바로 이동.
+  // pointercancel(세로 스크롤을 브라우저가 가져감)은 탭이 아니다. 리스너가 window보다 먼저 불려 드래그 여부(mode)를 그대로 읽는다
+  if (opts.mobile && section) {
+    section.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!active || picked >= 0 || ignoreTarget(e.target)) return;
+        tapId = e.pointerId;
+        tapX = e.clientX;
+        tapY = e.clientY;
+        tapT = performance.now();
+        touchState = 'down d0';
+      },
+      { signal },
+    );
+    section.addEventListener(
+      'pointerup',
+      (e) => {
+        if (e.pointerId !== tapId) return;
+        tapId = -1;
+        const d = Math.hypot(e.clientX - tapX, e.clientY - tapY);
+        let res = 'miss';
+        if (mode === 'drag' || d > (e.pointerType === 'mouse' ? DRAG_PX : TAP_PX)) res = 'drag';
+        else if (performance.now() - tapT > TAP_MS) res = 'long';
+        else if (active) {
+          const book = items[pickNear(e.clientX, e.clientY)];
+          if (book) {
+            res = book.href.split('/').filter(Boolean).pop() ?? book.href;
+            location.href = book.href; // 모바일은 전환 없이 바로 이동
+          }
+        }
+        touchState = `up d${Math.round(d)} ${res}`;
+      },
+      { signal },
+    );
+    section.addEventListener(
+      'pointercancel',
+      (e) => {
+        if (e.pointerId !== tapId) return;
+        tapId = -1;
+        touchState = 'cancel';
+      },
+      { signal },
+    );
+  }
   // 가로 휠·트랙패드·shift+휠: 가로 성분이 클 때만 가로채고, 세로 휠은 그대로 섹션 스크롤에 둔다
   addEventListener(
     'wheel',
@@ -532,6 +623,8 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       }
       if (DEBUG && (reportIn -= dt) <= 0) {
         reportIn = 0.25;
+        // 확인 스크립트용: 실제 책의 화면 사각형과 slug(?debug에서만)
+        Object.assign(window, { __bookRects: real.map((_, k) => ({ href: items[k].href, r: screenRect(k) ? [...rect].map(Math.round) : null })) });
         // 가장 높이 올라온 책 윗면의 화면 y(px, 위에서부터). innerHeight보다 크면 화면 밖
         let top = Infinity;
         for (let i = 0; i < n; i++) {
@@ -540,7 +633,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
           v.set(baseX[i] + cur[o + SHIFT], cur[o + Y] + P.size[1] * height[i] * 0.5 * cur[o + SCALE], cur[o + Z]).project(camera);
           top = Math.min(top, (0.5 - v.y * 0.5) * innerHeight);
         }
-        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  top ${Math.round(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}`);
+        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${Math.round(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}`);
       }
       return visible;
     },
