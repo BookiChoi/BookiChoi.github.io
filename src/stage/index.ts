@@ -115,6 +115,7 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   const lastPair = keys.length - 2; // 마지막 보간 구간의 시작 섹션
   let fit = 1; // 좁은 화면에서 카메라를 뒤로 빼는 배율
   let wide = 1; // 가로가 넓을수록 1: 도형을 오른쪽으로 옮기는 정도
+  let tall = 0; // 세로 화면일수록 1: 도형을 화면 아래쪽으로 옮기는 정도(PARAMS.portrait)
   let time = 0;
   const scroll = createScroll(); // reduced-motion에서는 update를 부르지 않아 0에 머문다
   // 현재 섹션 쌍과 보간값: shape와 카메라가 같은 값을 쓴다
@@ -146,16 +147,18 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     // 카메라와 시선을 같이 왼쪽으로 옮기면 도형이 화면 오른쪽에 온다
     const shift = (a.shift + (b.shift - a.shift) * m) * wide;
     const drift = (a.drift + (b.drift - a.drift) * m) * Math.sin(time * PARAMS.driftSpeed);
-    camera.position.set(
-      (a.pos[0] + (b.pos[0] - a.pos[0]) * m) * fit - shift + drift + ndc.x * PARAMS.gaze,
-      (a.pos[1] + (b.pos[1] - a.pos[1]) * m) * fit + ndc.y * PARAMS.gaze,
-      (a.pos[2] + (b.pos[2] - a.pos[2]) * m) * fit,
-    );
-    camera.lookAt(
-      a.look[0] + (b.look[0] - a.look[0]) * m - shift,
-      a.look[1] + (b.look[1] - a.look[1]) * m,
-      a.look[2] + (b.look[2] - a.look[2]) * m,
-    );
+    // 세로 화면: 시선에서 카메라까지 간격을 far배로 늘리고, 둘 다 drop(NDC)만큼 위로 올려 도형을 화면 아래쪽으로 보낸다
+    const port = (a.port + (b.port - a.port) * m) * tall;
+    const far = 1 + (PARAMS.portrait.far - 1) * port;
+    const lx = a.look[0] + (b.look[0] - a.look[0]) * m - shift;
+    const ly = a.look[1] + (b.look[1] - a.look[1]) * m;
+    const lz = a.look[2] + (b.look[2] - a.look[2]) * m;
+    const px = ((a.pos[0] + (b.pos[0] - a.pos[0]) * m) * fit - shift + drift + ndc.x * PARAMS.gaze - lx) * far + lx;
+    const py = ((a.pos[1] + (b.pos[1] - a.pos[1]) * m) * fit + ndc.y * PARAMS.gaze - ly) * far + ly;
+    const pz = ((a.pos[2] + (b.pos[2] - a.pos[2]) * m) * fit - lz) * far + lz;
+    const lift = PARAMS.portrait.drop * port * tanHalf * Math.hypot(px - lx, py - ly, pz - lz);
+    camera.position.set(px, py + lift, pz);
+    camera.lookAt(lx, ly + lift, lz);
   };
 
   const resize = () => {
@@ -167,6 +170,9 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     // 세로 화면에서도 도형 전체가 들어오게 카메라를 뒤로 뺀다
     fit = Math.max(1, (PARAMS.ring.radius * PARAMS.fitMargin) / (tanHalf * camera.aspect) / PARAMS.fitDistance);
     wide = Math.min(1, Math.max(0, (camera.aspect - 1) / 0.6));
+    const pt = PARAMS.portrait;
+    const u = Math.min(1, Math.max(0, (pt.from - camera.aspect) / (pt.from - pt.to)));
+    tall = u * u * (3 - 2 * u);
     particles.setScale(canvas.height / (2 * tanHalf));
     books?.resize(camera.aspect);
     scroll.measure();

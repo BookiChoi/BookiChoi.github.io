@@ -115,13 +115,18 @@ export const PARAMS = {
   // shift: 가로가 넓은 화면에서 도형을 오른쪽으로 옮기는 거리(글이 왼쪽에 있어서). drift: 느린 좌우 이동 폭
   fov: 45,
   cameraKeys: [
-    { pos: [-0.6, 1.3, 7.6], look: [0, 0.3, 0], shift: 1.75, drift: 0.4 }, // s0: 가려진 동안. s1로 가며 카메라만 다가간다
-    { pos: [1.3, 0.6, 6.9], look: [0, 0.3, 0], shift: 1.75, drift: 0.4 }, // building: 약간 비스듬히, 천천히
-    { pos: [0, 0, 5.2], look: [0, 0, 0], shift: 0.6, drift: 0 },
-    { pos: [0.4, 0.2, 5.4], look: [0, 0, 0], shift: 1.3, drift: 0 },
-    { pos: [0, 0.5, 5], look: [0, 0.05, 0], shift: 1.5, drift: 0 },
-    { pos: [0, -0.95, 5], look: [0, -0.95, 0], shift: 0, drift: 0 }, // s5: 띠가 책 줄 위쪽(책 뒤와 그 위)을 지나게 시선을 내린다
+    // port: 세로 화면 배치(PARAMS.portrait)를 얼마나 적용할지(0이면 가로와 같은 자리). s0은 s1과 같은 자리라 스크롤 중에 움직이지 않는다
+    { pos: [-0.6, 1.3, 7.6], look: [0, 0.3, 0], shift: 1.75, drift: 0.4, port: 1 }, // s0: 가려진 동안. s1로 가며 카메라만 다가간다
+    { pos: [1.3, 0.6, 6.9], look: [0, 0.3, 0], shift: 1.75, drift: 0.4, port: 1 }, // building: 약간 비스듬히, 천천히
+    { pos: [0, 0, 5.2], look: [0, 0, 0], shift: 0.6, drift: 0, port: 1 },
+    { pos: [0.4, 0.2, 5.4], look: [0, 0, 0], shift: 1.3, drift: 0, port: 1 },
+    { pos: [0, 0.5, 5], look: [0, 0.05, 0], shift: 1.5, drift: 0, port: 1 },
+    { pos: [0, -0.95, 5], look: [0, -0.95, 0], shift: 0, drift: 0, port: 0 }, // s5: 띠가 책 줄 위쪽(책 뒤와 그 위)을 지나게 시선을 내린다
   ],
+  // 세로 화면(폰, 태블릿 세로): 글은 위(CSS max-aspect-ratio: 1/1에서 상단 정렬), 모양은 아래쪽 약 55%.
+  // aspect가 from 이상이면 0(가로), to 이하면 1, 사이는 smoothstep. drop: 모양을 내리는 양(NDC, 0.45면 중심이 위에서 72.5%),
+  // far: 모양이 아래 구간에 들어가도록 카메라를 더 뒤로 빼는 배율
+  portrait: { from: 1.05, to: 0.85, drop: 0.45, far: 1.3 }, // from이 1보다 조금 큰 것: 글이 위로 가는 정사각형(1.0)에서도 모양이 이미 조금 내려가 있게
   driftSpeed: 0.15, // drift의 각속도(rad/s)
   fitDistance: 5, // 좁은 화면 보정의 기준 카메라 거리
   fitMargin: 1.3, // 좁은 화면에서 도형이 잘리지 않게 뒤로 물러나는 여유

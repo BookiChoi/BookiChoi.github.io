@@ -73,6 +73,10 @@ main.stage-main {
   align-content: center;
   padding: var(--header-h) 1.5rem;
 }
+/* 세로 화면: S1~S4 글은 위쪽에 두고(점 모양은 카메라가 화면 아래쪽 약 55%로 보낸다, PARAMS.portrait). 이름(S0)의 세로 규칙과 같은 기준 */
+@media (max-aspect-ratio: 1/1) {
+  .screen:not(.s0) { align-content: start; padding-top: calc(var(--header-h) + 2.5rem); }
+}
 /* S0: 불투명한 밝은 배경이 고정 캔버스(점 구름)를 가린다. 스크롤하면 위로 밀려 올라가며 어두운 스테이지가 드러난다 */
 .s0 { justify-items: center; background: var(--hero-bg); color: var(--hero-fg); overflow: hidden; padding-inline: 0.75rem; }
 /* 잉크 캔버스(WebGL2): 켜지면(html.ink-on) S0 배경 + 잉크 + 이름 글자를 불투명하게 직접 그린다.
