@@ -16,11 +16,6 @@ const BLUR_EM = [0.035, 0.07]; // 글자 높이 지도 흐림 반경(글자 크�
 const DPR_CAP = 1.5;
 const FIELD_SCALE = 0.25; // 마스크 필드 해상도(캔버스 픽셀 대비)
 const RADIUS_VW = 0.07; // 보이는 반경(붓 굵기의 절반): 뷰포트 폭 비율. 속도와 무관하게 고정
-const SPEED_MAX = 1200; // px/s: 이 속도에서 튄 물감 최대
-const SPLAT_EVERY = 45; // 최대 속도에서 이 거리(px)마다 튄 물방울 1개. 느릴수록 속도 비율만큼 줄어든다
-const SPLAT_MAX = 6; // 이동 1번당 물방울 상한
-const SPLAT_SIZE = [0.05, 0.6]; // 물방울 반경: 메인 반경 비율(작은 쪽이 많다)
-const SPLAT_GAP = 1.2; // 물방울 중심과 궤적 중심선의 최소 거리 = SPLAT_GAP × 반경 + 물방울 반경
 const KEEP_RATE = 0.4; // 필드 감쇠: f × e^(−KEEP_RATE·t) − SUB_RATE·t. 약 1.8초 뒤 임계 아래로
 const SUB_RATE = 0.12;
 const BLUR_RATE = 12; // 블러 세기(1/s)
@@ -42,9 +37,8 @@ interface Pen {
   x: number;
   y: number;
   t: number;
-  speed: number;
 }
-const newPen = (): Pen => ({ has: false, x: 0, y: 0, t: 0, speed: 0 });
+const newPen = (): Pen => ({ has: false, x: 0, y: 0, t: 0 });
 
 /** canvas는 S0를 꽉 채우는 잉크 캔버스. reduced-motion, WebGL2 없음, 셰이더 실패면 아무것도 하지 않는다(DOM 이름이 그대로 보인다). */
 export function initInk(canvas: HTMLCanvasElement): void {
@@ -153,7 +147,6 @@ export function initInk(canvas: HTMLCanvasElement): void {
   let sweepStart = -1;
   let sweepTimer = 0;
   let nextReport = 0;
-  let dropAcc = 0;
   let flowX = 0;
   let flowY = 0;
   let flowVX = 0;
@@ -231,7 +224,7 @@ export function initInk(canvas: HTMLCanvasElement): void {
     let k = stamps;
     if (k === MAX_STAMPS) {
       overflow++;
-      if (dot) return; // 물방울은 칸이 없으면 버린다(이어 붙이면 엉뚱한 선분이 된다)
+      if (dot) return; // 점 스탬프(획 시작점)는 칸이 없으면 버린다(이어 붙이면 엉뚱한 선분이 된다)
       k = MAX_STAMPS - 1;
       x0 = seg[k * 4];
       y0 = seg[k * 4 + 1];
@@ -245,8 +238,8 @@ export function initInk(canvas: HTMLCanvasElement): void {
     rs[k * 2 + 1] = 1;
   };
 
-  /** 펜을 (x, y)로 옮기며 스탬프를 찍는다. 반경은 속도와 무관하게 고정. fixedSpeed는 튄 물감 양에만 쓴다 */
-  const moveTo = (pen: Pen, x: number, y: number, now: number, fixedSpeed = -1) => {
+  /** 펜을 (x, y)로 옮기며 스탬프를 찍는다. 반경은 속도와 무관하게 고정 */
+  const moveTo = (pen: Pen, x: number, y: number, now: number) => {
     if (!ready || dead) return;
     const first = !pen.has;
     const dx = first ? 0 : x - pen.x;
@@ -254,28 +247,11 @@ export function initInk(canvas: HTMLCanvasElement): void {
     const dist = Math.hypot(dx, dy);
     if (!first) {
       const dtp = Math.max(1, now - pen.t) / 1000;
-      pen.speed += (dist / dtp - pen.speed) * 0.35;
       flowVX += (dx / dtp / Math.min(w, h) - flowVX) * 0.2;
       flowVY += (dy / dtp / Math.min(w, h) - flowVY) * 0.2;
     }
-    const speed = fixedSpeed >= 0 ? fixedSpeed : pen.speed;
     const vis = w * RADIUS_VW;
     stamp(first ? x : pen.x, first ? y : pen.y, x, y, vis, now, first);
-    // 튄 물감: 속도에 비례한 개수를 진행 방향 앞·옆으로 던진다. 제자리에 찍히고 필드 감쇠로 사라진다
-    if (dist > 0) dropAcc = Math.min(SPLAT_MAX, dropAcc + (dist / SPLAT_EVERY) * clamp01(speed / SPEED_MAX));
-    const ux = dist > 0 ? dx / dist : 0;
-    const uy = dist > 0 ? dy / dist : 0;
-    for (; dropAcc >= 1; dropAcc--) {
-      const u = Math.random();
-      const r = vis * (SPLAT_SIZE[0] + (SPLAT_SIZE[1] - SPLAT_SIZE[0]) * u * u);
-      const far = 1 - u * u * 0.6; // 작은 방울일수록 멀리
-      const ahead = vis * (0.2 + 1.6 * Math.random()) * far;
-      // 궤적 가장자리(vis)에 붙어 돌기가 되지 않게: 중심선에서 SPLAT_GAP × vis + r 이상 떨어뜨린다
-      const side = (Math.random() < 0.5 ? -1 : 1) * (SPLAT_GAP * vis + r + vis * 1.1 * Math.random() * far);
-      const ox = x + ux * ahead - uy * side;
-      const oy = y + uy * ahead + ux * side;
-      stamp(ox, oy, ox, oy, r, now, true);
-    }
     pen.has = true;
     pen.x = x;
     pen.y = y;
@@ -424,7 +400,7 @@ export function initInk(canvas: HTMLCanvasElement): void {
       const p = sweeps % 2 ? smooth(u) : 1 - smooth(u);
       const r = title.getBoundingClientRect();
       const c = canvas.getBoundingClientRect();
-      moveTo(sweepPen, r.left - c.left + r.width * (1.08 * p - 0.04), r.top - c.top + r.height * (0.5 - 0.34 * Math.sin(p * Math.PI * 2)), now, SPEED_MAX * 0.5);
+      moveTo(sweepPen, r.left - c.left + r.width * (1.08 * p - 0.04), r.top - c.top + r.height * (0.5 - 0.34 * Math.sin(p * Math.PI * 2)), now);
       if (u >= 1) {
         sweepStart = -1;
         sweepPen.has = false;
