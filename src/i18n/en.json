@@ -23,5 +23,8 @@
   "status": "Status",
   "attribution": "Attribution",
   "statusLabels": { "planned": "Planned", "in-progress": "In progress", "done": "Done" },
+  "contents": "Contents",
+  "prevProject": "Previous project",
+  "nextProject": "Next project",
   "chooseLanguage": "Choose a language"
 }

@@ -1,0 +1,22 @@
+---
+// 상세 페이지 표지. 홈의 책과 같은 그리기 코드(src/stage/coverArt.ts, three 없음)로 한 번 그린다.
+// JS가 꺼져 있으면 hue 색 블록만 보인다. view-transition-name(book-cover)은 홈 책 오버레이와 같다(detail.css).
+interface Props { slug: string; title: string; hue: number; order: number }
+const { slug, title, hue, order } = Astro.props;
+---
+<canvas class="project-cover" width="512" height="768" aria-hidden="true" data-slug={slug} data-title={title} data-hue={hue} data-order={order} style={`--hue: ${hue}`}></canvas>
+
+<script>
+  import { drawCover } from '../stage/coverArt';
+  const el = document.querySelector<HTMLCanvasElement>('.project-cover');
+  if (el) {
+    const css = getComputedStyle(document.documentElement);
+    const fonts = { display: css.getPropertyValue('--font-display').trim(), mono: css.getPropertyValue('--font-mono').trim() };
+    const d = el.dataset;
+    const book = { slug: d.slug ?? '', title: d.title ?? '', summary: '', hue: Number(d.hue), order: Number(d.order), href: '' };
+    document.fonts
+      .load(`400 26px ${fonts.mono}`, '0123456789')
+      .catch(() => {})
+      .finally(() => el.getContext('2d')?.drawImage(drawCover(book, fonts), 0, 0));
+  }
+</script>

@@ -1,7 +1,9 @@
 ---
-import { getCollection, render } from 'astro:content';
+import { getCollection } from 'astro:content';
 import Base from '../../../layouts/Base.astro';
+import ProjectCover from '../../../components/ProjectCover.astro';
 import { getT, type Lang } from '../../../i18n';
+import '../../../styles/detail.css';
 
 export async function getStaticPaths() {
   return (await getCollection('projects')).map((entry) => {
@@ -13,25 +15,122 @@ const lang = Astro.params.lang as Lang;
 const { entry } = Astro.props;
 const { data } = entry;
 const t = getT(lang);
-const { Content } = await render(entry);
+const isTodo = (s: string) => s.trimStart().startsWith('TODO');
+const TODO_P = '<p>TODO: 내 확인 필요</p>';
+
+// 챕터: 마크다운 h2마다 한 구간. id는 마크다운이 만든 heading id 그대로(목차 앵커와 일치), 제목 앞에 mono 번호를 붙인다
+const headings = (entry.rendered?.metadata?.headings ?? []).filter((h) => h.depth === 2);
+const chunks = (entry.rendered?.html ?? '').split(/(?=<h2[\s>])/).filter((c) => c.startsWith('<h2'));
+const chapters = chunks.map((c, i) => ({
+  id: headings[i]?.slug ?? `chapter-${i + 1}`,
+  title: headings[i]?.text ?? '',
+  num: String(i + 1).padStart(2, '0'),
+  // 원래 h2는 떼고 다시 그린다. 확인 안 된 문장은 문구 그대로 두고 눈에 띄는 표시(class="todo")만 붙인다
+  html: c.replace(/^<h2[^>]*>[\s\S]*?<\/h2>/, '').replaceAll(TODO_P, '<p class="todo">TODO: 내 확인 필요</p>'),
+}));
+const [first, ...rest] = chapters;
+
+// 이전/다음 프로젝트: 같은 언어, order 순으로 순환
+const siblings = (await getCollection('projects', (e) => e.id.endsWith(`/${lang}`))).sort((a, b) => a.data.order - b.data.order);
+const idx = siblings.findIndex((e) => e.id === entry.id);
+const prev = siblings[(idx - 1 + siblings.length) % siblings.length];
+const next = siblings[(idx + 1) % siblings.length];
+const href = (e: (typeof siblings)[number]) => `/${lang}/projects/${e.id.split('/')[0]}/`;
+const meta: [string, string][] = [
+  [t.company, data.company],
+  [t.dataset, data.dataset],
+  [t.tags, data.tags.join(', ') || '—'],
+  [t.status, t.statusLabels[data.status]],
+];
 ---
 <Base lang={lang} path={`/projects/${Astro.params.slug}/`} title={data.title} description={data.summary}>
-  <main id="main">
-    <article class="prose">
-      <h1>{data.title}</h1>
-      <p>{data.summary}</p>
-      <dl class="meta">
-        <dt class="label">{t.company}</dt><dd>{data.company}</dd>
-        <dt class="label">{t.dataset}</dt><dd>{data.dataset}</dd>
-        <dt class="label">{t.tags}</dt><dd>{data.tags.join(', ') || '—'}</dd>
-        <dt class="label">{t.status}</dt><dd>{t.statusLabels[data.status]}</dd>
-      </dl>
-      <Content />
-      <aside class="attribution">
-        <h2 class="label">{t.attribution}</h2>
-        {data.attribution.map((a) => <p>{a}</p>)}
-      </aside>
-      <p><a href={`/${lang}/#projects`}>← {t.back}</a></p>
-    </article>
-  </main>
+  <div class="detail" style={`--hue: ${data.coverHue}`}>
+    <div class="read-progress" aria-hidden="true" hidden><span></span></div>
+    <main id="main">
+      <header class="detail-hero">
+        <div class="hero-cover">
+          <ProjectCover slug={Astro.params.slug} title={data.title} hue={data.coverHue} order={data.order} />
+        </div>
+        <div class="hero-text">
+          <h1>{data.title}</h1>
+          <p class:list={['summary', { todo: isTodo(data.summary) }]}>{data.summary}</p>
+          {first && (
+            <section class="chapter chapter-first" aria-labelledby={first.id}>
+              <h2 id={first.id}><span class="num">{first.num}</span> {first.title}</h2>
+              <Fragment set:html={first.html} />
+            </section>
+          )}
+          <dl class="meta">
+            {meta.map(([k, v]) => (<><dt class="label">{k}</dt><dd class:list={{ todo: isTodo(v) }}>{v}</dd></>))}
+          </dl>
+        </div>
+      </header>
+
+      <div class="detail-body">
+        <nav class="rail" aria-label={t.contents}>
+          <ol>
+            {chapters.map((c) => (
+              <li><a href={`#${c.id}`}><span class="num">{c.num}</span><span>{c.title}</span></a></li>
+            ))}
+          </ol>
+        </nav>
+        <div class="reading">
+          {rest.map((c) => (
+            <section class="chapter" aria-labelledby={c.id}>
+              <h2 id={c.id}><span class="num">{c.num}</span> {c.title}</h2>
+              <Fragment set:html={c.html} />
+              {c.num === '07' && (
+                <figure class="chart-slot">
+                  <div class="chart-frame" aria-hidden="true"></div>
+                  <figcaption class="todo">TODO: 내 확인 필요</figcaption>
+                </figure>
+              )}
+              {c.num === '10' && data.attribution.length > 0 && (
+                <div class="attribution">
+                  <h3 class="label">{t.attribution}</h3>
+                  {data.attribution.map((a) => <p class:list={{ todo: isTodo(a) }}>{a}</p>)}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      </div>
+
+      <nav class="detail-foot" aria-label={t.projects}>
+        <a class="foot-prev" href={href(prev)}><span class="label">← {t.prevProject}</span><span>{prev.data.title}</span></a>
+        <a class="foot-next" href={href(next)}><span class="label">{t.nextProject} →</span><span>{next.data.title}</span></a>
+        <a class="foot-back label" href={`/${lang}/#projects`}>← {t.back}</a>
+      </nav>
+    </main>
+  </div>
 </Base>
+
+<script>
+  // 목차 레일: 화면 세로 중앙선에 걸친 챕터의 링크에 aria-current. 모바일은 상단 진행 막대
+  const links = new Map<string, HTMLAnchorElement>();
+  for (const a of document.querySelectorAll<HTMLAnchorElement>('.rail a')) links.set(decodeURIComponent(a.hash.slice(1)), a);
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        for (const a of links.values()) a.removeAttribute('aria-current');
+        links.get(e.target.getAttribute('aria-labelledby') ?? '')?.setAttribute('aria-current', 'true');
+      }
+    },
+    { rootMargin: '-50% 0px -50% 0px' },
+  );
+  for (const s of document.querySelectorAll('.chapter')) io.observe(s);
+
+  const bar = document.querySelector<HTMLElement>('.read-progress');
+  if (bar) {
+    bar.hidden = false;
+    let queued = false;
+    const update = () => {
+      queued = false;
+      const max = document.documentElement.scrollHeight - innerHeight;
+      bar.style.setProperty('--progress', String(max > 0 ? Math.min(1, scrollY / max) : 0));
+    };
+    addEventListener('scroll', () => queued || ((queued = true), requestAnimationFrame(update)), { passive: true });
+    update();
+  }
+</script>

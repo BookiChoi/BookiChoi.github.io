@@ -120,6 +120,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
 
   const meshes: Mesh[] = [];
   const real: Mesh[] = []; // 레이캐스트 대상(실제 책만)
+  const coverArt: HTMLCanvasElement[] = []; // real[k]의 앞표지 그림(상세 전환 오버레이에 복사)
   const realIndex: number[] = []; // real[k]의 고리 안 위치
   for (let i = 0; i < n; i++) {
     const k = i - left;
@@ -127,7 +128,9 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     let mesh: Mesh;
     if (k >= 0 && book) {
       // 면 순서: +x(책배) −x(책등) +y −y +z(앞표지) −z(뒷표지)
-      mesh = new Mesh(geometry, [paper, mat('#ffffff', makeSpine(book, fonts)), paper, paper, mat('#ffffff', makeCover(book, fonts)), mat(themeOf(book).back)]);
+      const cover = makeCover(book, fonts);
+      coverArt.push(cover.image as HTMLCanvasElement);
+      mesh = new Mesh(geometry, [paper, mat('#ffffff', makeSpine(book, fonts)), paper, paper, mat('#ffffff', cover), mat(themeOf(book).back)]);
       real.push(mesh);
       realIndex.push(i);
     } else {
@@ -242,6 +245,42 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     }
   };
 
+  // 책 → 상세 전환: 같은 문서 간 View Transitions를 지원하고 reduced-motion이 아니면, 이동 직전에 선택한 책 앞표지 자리에
+  // 표지 그림 오버레이(HTML)를 띄우고 상세 표지와 같은 이름(book-cover)을 붙인다. 브라우저가 두 자리 사이를 보간한다.
+  // 미지원 브라우저와 모바일(탭 즉시 이동, 표지가 정면이 아님)은 오버레이 없이 그대로 이동한다
+  const canMorph = 'onpageswap' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let overlay: HTMLCanvasElement | null = null;
+  const removeOverlay = () => {
+    overlay?.remove();
+    overlay = null;
+  };
+  const showOverlay = (k: number) => {
+    removeOverlay();
+    const art = coverArt[k];
+    const mesh = real[k];
+    if (!canMorph || !art || !mesh) return;
+    mesh.updateMatrixWorld();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      // 앞표지(+z 면)의 네 모서리를 화면 좌표로
+      v.set((sx * P.size[0]) / 2, (sy * P.size[1]) / 2, P.size[2] / 2).applyMatrix4(mesh.matrixWorld).project(camera);
+      const px = (v.x * 0.5 + 0.5) * innerWidth;
+      const py = (0.5 - v.y * 0.5) * innerHeight;
+      x0 = Math.min(x0, px);
+      x1 = Math.max(x1, px);
+      y0 = Math.min(y0, py);
+      y1 = Math.max(y1, py);
+    }
+    overlay = document.createElement('canvas');
+    overlay.className = 'book-overlay';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.width = art.width;
+    overlay.height = art.height;
+    overlay.getContext('2d')?.drawImage(art, 0, 0);
+    Object.assign(overlay.style, { left: `${x0}px`, top: `${y0}px`, width: `${x1 - x0}px`, height: `${y1 - y0}px` });
+    document.body.append(overlay);
+  };
+
   const { signal } = opts;
   addEventListener(
     'pointerdown',
@@ -303,7 +342,10 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       picked = k;
       hover = -1;
       showTip(-1);
-      window.setTimeout(() => (location.href = book.href), P.pickMs);
+      window.setTimeout(() => {
+        showOverlay(k);
+        location.href = book.href;
+      }, P.pickMs);
     },
     { signal },
   );
@@ -351,6 +393,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   addEventListener(
     'pageshow',
     () => {
+      removeOverlay();
       picked = -1;
       down = false;
       mode = 'snap';
@@ -358,6 +401,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     },
     { signal },
   );
+  addEventListener('pagereveal', removeOverlay, { signal }); // bfcache 복원 직후 첫 프레임 전에도 지운다
 
   return {
     scene,
@@ -487,6 +531,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       return visible;
     },
     dispose() {
+      removeOverlay();
       document.documentElement.style.cursor = '';
       if (tip) tip.hidden = true;
       geometry.dispose();

@@ -123,6 +123,13 @@ main.stage-main {
 .book-tip p { margin: 0.35rem 0 0; font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary); }
 .book-tip .label { display: block; margin-top: 0.6rem; color: var(--accent); }
 
+/* 책 → 상세 전환(같은 문서 간 View Transitions): 클릭한 책 앞표지 자리에 뜨는 오버레이가 상세 표지(detail.css)와 같은 이름을 쓴다 */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+  ::view-transition-group(book-cover) { animation-duration: 0.55s; animation-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1); }
+}
+.book-overlay { position: fixed; z-index: var(--z-header); border-radius: 4px; pointer-events: none; view-transition-name: book-cover; }
+
 /* --- 섹션 텍스트 등장 (시간 기반) ---
    기본은 항상 보인다. JS가 html.js-sections를 붙였을 때만 숨겼다가, 현재 섹션([data-active])에서 --i 순서로 등장시킨다. */
 @media (prefers-reduced-motion: no-preference) {

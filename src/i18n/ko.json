@@ -23,5 +23,8 @@
   "status": "상태",
   "attribution": "출처 표기",
   "statusLabels": { "planned": "예정", "in-progress": "진행 중", "done": "완료" },
+  "contents": "목차",
+  "prevProject": "이전 프로젝트",
+  "nextProject": "다음 프로젝트",
   "chooseLanguage": "언어 선택"
 }
