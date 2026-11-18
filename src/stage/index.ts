@@ -254,7 +254,9 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     }
 
     particles.step(dt, time, pointer, blend);
-    draw(books ? books.update(dt, scroll.sec) : false);
+    // 책은 S5(sec = keys.length - 1)까지만: S6(소개)가 들어오면 sec를 되접어 책을 비활성으로 돌리고 가라앉힌다(window 입력이 가려진 책에 닿지 않게)
+    const proj = keys.length - 1;
+    draw(books ? books.update(dt, scroll.sec <= proj ? scroll.sec : proj - (scroll.sec - proj) * 4) : false);
     if (!ready) {
       ready = true;
       markReady();

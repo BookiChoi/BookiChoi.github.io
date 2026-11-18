@@ -23,7 +23,16 @@ const items = (await getCollection('projects'))
 // 히어로 이름: 단어 → 글자, 글자마다 스태거 순번. 마지막 단어는 강조(em, 프리셋 c에서 italic).
 let n = 0;
 const words = SITE_NAME.split(' ').map((w) => [...w].map((ch) => ({ ch, i: n++ })));
-const roleWords = t.role.split(' ');
+// 큰 문구: [앞부분(끝 공백 포함), 마지막 단어]. 마지막 단어는 em(프리셋 c에서 italic)
+const lastWord = (s: string) => {
+  const i = s.lastIndexOf(' ');
+  return [s.slice(0, i + 1), s.slice(i + 1)];
+};
+const [s1a, s1b] = lastWord(t.role);
+const [s2a, s2b] = lastWord(t.s2);
+const [s3a, s3b] = lastWord(t.s3);
+const [s4a, s4b] = lastWord(t.s4);
+const [s5a, s5b] = lastWord(t.s5);
 const sections = [
   { id: 's0', label: SITE_NAME },
   { id: 's1', label: t.s1Label },
@@ -31,6 +40,7 @@ const sections = [
   { id: 's3', label: t.s3Label },
   { id: 's4', label: t.s4Label },
   { id: 's5', label: t.projects },
+  { id: 's6', label: t.about },
 ];
 // 3D 책(books.ts)이 읽는 데이터. HTML 안 JSON이라 '<'는 이스케이프한다
 const books = JSON.stringify(
@@ -67,31 +77,31 @@ const books = JSON.stringify(
     <section id="s1" class="snap screen">
       <div class="wrap">
         <p class="label eyebrow reveal" style="--i:0">{t.s1Label}</p>
-        <h2 class="role display reveal" style="--i:1">{roleWords.slice(0, -1).join(' ')} <em>{roleWords.at(-1)}</em></h2>
-        <p class="statement reveal" style="--i:2">{t.intro}</p>
+        <h2 class="role display reveal" style="--i:1">{s1a}<em>{s1b}</em></h2>
       </div>
     </section>
     <section id="s2" class="snap screen">
       <div class="wrap">
-        <h2 class="label eyebrow reveal" style="--i:0">{t.s2Label}</h2>
-        <p class="statement reveal" style="--i:1">{t.s2}</p>
+        <p class="label eyebrow reveal" style="--i:0">{t.s2Label}</p>
+        <h2 class="role display reveal" style="--i:1">{s2a}<em>{s2b}</em></h2>
       </div>
     </section>
     <section id="s3" class="snap screen">
       <div class="wrap">
-        <h2 class="label eyebrow reveal" style="--i:0">{t.s3Label}</h2>
-        <ul class="statements">{t.s3.map((line, i) => <li class="statement reveal" style={`--i:${i + 1}`}>{line}</li>)}</ul>
+        <p class="label eyebrow reveal" style="--i:0">{t.s3Label}</p>
+        <h2 class="role display reveal" style="--i:1">{s3a}<em>{s3b}</em></h2>
       </div>
     </section>
     <section id="s4" class="snap screen">
       <div class="wrap">
-        <h2 class="label eyebrow reveal" style="--i:0">{t.s4Label}</h2>
-        <p class="statement reveal" style="--i:1">{t.s4}</p>
+        <p class="label eyebrow reveal" style="--i:0">{t.s4Label}</p>
+        <h2 class="role display reveal" style="--i:1">{s4a}<em>{s4b}</em></h2>
+        <p class="note reveal" style="--i:2">{t.s4Note}</p>
       </div>
     </section>
     <section id="s5" class="snap">
       <div id="projects">
-        <h2 class="reveal" style="--i:0">{t.projects}</h2>
+        <h2 class="role display reveal" style="--i:0">{s5a}<em>{s5b}</em></h2>
         <ul class="project-list">
           {items.map((p, i) => (
             <li class="reveal" style={`--i:${i + 1}`}>
@@ -110,6 +120,17 @@ const books = JSON.stringify(
         <strong></strong>
         <p></p>
         <span class="label">{t.open} →</span>
+      </div>
+    </section>
+    <section id="s6" class="snap">
+      <div class="about">
+        <div class="about-head">
+          <h2 class="label about-label reveal" style="--i:0">{t.about}</h2>
+          <p class="about-lead display reveal" style="--i:1"><em>{t.aboutLead}</em></p>
+        </div>
+        <div class="about-body">
+          {t.aboutBody.map((para, i) => <p class="reveal" style={`--i:${i + 2}`}>{para}</p>)}
+        </div>
       </div>
     </section>
   </main>
