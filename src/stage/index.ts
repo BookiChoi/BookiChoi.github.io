@@ -17,6 +17,7 @@ import { createDownshiftGate, createFpsMeter, dprCap, initialTier, isMobile, low
 
 const WARMUP = 10; // 셰이더 컴파일이 끼는 첫 프레임들은 FPS 평균에서 뺀다
 const STATIC_STEPS = 30; // reduced-motion에서 정적 한 장을 만들 시뮬 스텝 수
+const PAUSE_Y = 2; // scrollY가 이 이하(S0이 화면을 다 덮고 스크롤 전)면 메인 스테이지를 멈춘다
 
 /** 렌더 가능한 부동소수점 타깃 타입. Float → HalfFloat 순으로 실제 프레임버퍼를 만들어 확인한다. */
 function pickFloatType(renderer: WebGLRenderer): TextureDataType | null {
@@ -38,9 +39,10 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const debug = createDebug();
   const info = { webgl2: false, tex: 'none', tier: 0, dpr: 1, tReady: -1, shapeA: 0, shapeB: 0, mix: 0 };
+  let paused = false;
   const report = (fps = 0, p = 0, sec = 0) =>
     debug?.(
-      `tier ${info.tier} (${info.tier * info.tier} pts)\ndpr ${info.dpr.toFixed(2)}\nfps ${fps.toFixed(1)}\n` +
+      `stage ${paused ? 'paused' : 'running'}\ntier ${info.tier} (${info.tier * info.tier} pts)\ndpr ${info.dpr.toFixed(2)}\nfps ${fps.toFixed(1)}\n` +
         `webgl2 ${info.webgl2}\ntex ${info.tex}\nreduced-motion ${reduced}\n` +
         `--p ${p.toFixed(3)}  --sec ${sec.toFixed(3)}\nshape ${info.shapeA}→${info.shapeB}  uMix ${info.mix.toFixed(2)}\nt_ready ${info.tReady < 0 ? '-' : `${Math.round(info.tReady)} ms`}`,
     );
@@ -208,6 +210,20 @@ export function initStage(canvas: HTMLCanvasElement): (() => void) | undefined {
     const raw = last ? (now - last) / 1000 : 1 / 60;
     last = now;
     const dt = Math.min(raw, 1 / 30);
+    // S0이 캔버스를 다 가리는 동안은 시뮬·렌더·FPS 판정을 건너뛰고 시간도 얼린다(잉크 컨텍스트와 GPU를 나눠 쓰지 않게).
+    // 입장 스프링이 끝난 뒤에만 멈춰서, 스크롤하면 수렴한 상태 그대로 이어진다
+    const hold = ready && time > PARAMS.introDuration + 1 && scrollY <= PAUSE_Y;
+    if (hold !== paused) {
+      paused = hold;
+      if (!hold) gate.restart(); // 재개 직후 첫 윈도우는 tier 판정에서 뺀다
+    }
+    if (hold) {
+      if (debug && now >= nextReport) {
+        nextReport = now + 250;
+        report(meter.fps, scroll.p, scroll.sec);
+      }
+      return;
+    }
     time += dt;
 
     scroll.update(dt);

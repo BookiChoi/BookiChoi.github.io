@@ -41,6 +41,8 @@
 /* 헤더와 인디케이터는 밝은 S0와 어두운 섹션 양쪽에 걸친다: 흰색 + difference로 바탕의 반대색이 된다 */
 .site-header, .section-nav { mix-blend-mode: difference; }
 .site-header a { color: #fff; text-decoration: none; letter-spacing: 0.1em; }
+/* 탭 대상 약 44px: 패딩으로 누르는 영역만 넓히고 같은 크기의 음수 margin으로 글자 위치는 그대로 둔다 */
+.site-header a { display: inline-block; padding: 11px 13px; margin: -11px -13px; }
 .site-header a:hover { opacity: 0.6; }
 
 /* --- 스냅 스크롤: main[data-snap]이 있는 문서(홈)에만 걸린다 --- */
@@ -159,6 +161,8 @@ main.stage-main {
   display: grid;
 }
 .section-nav a { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; }
+@media (pointer: coarse) { .section-nav a { width: 2.75rem; height: 2.75rem; } } /* 터치: 탭 대상 44px */
+@media (pointer: coarse) { .section-nav { right: 0.25rem; } } /* 넓어진 칸만큼 점 위치를 가장자리 쪽으로 유지 */
 .section-nav a::before {
   content: '';
   width: 6px;

@@ -175,6 +175,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   let suppressClick = false;
 
   let worldPerPx = 0.01; // 책 평면(z = 0)에서 화면 1px의 월드 길이
+  let rise = P.rise; // 등장 전 숨는 깊이. 세로 화면은 카메라가 멀어 resize에서 더 깊게 잡는다
   let active = false; // S5에 거의 다 들어왔을 때만 입력을 받는다
   let hover = -1; // 포인터가 올라간 실제 책(real 인덱스)
   let focus = -1; // 키보드 포커스가 간 링크에 대응하는 책
@@ -416,6 +417,9 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       camera.lookAt(0, P.y, 0);
       camera.updateProjectionMatrix();
       worldPerPx = (2 * tan * camera.position.length()) / innerHeight;
+      // 숨은 책(가장 큰 높이, 가운데 z) 윗면이 화면 아래 가장자리보다 0.3 아래에 오게 한다(데스크톱은 P.rise 그대로)
+      const bottom = camera.position.y - (d - zCenter) * Math.tan(Math.atan2(camera.position.y - P.y, d) + (P.fov * Math.PI) / 360);
+      rise = Math.max(P.rise, P.y + P.size[1] * (1 + P.heightJitter) * 0.5 - bottom + 0.3);
     },
     update(dt, sec) {
       const now = performance.now();
@@ -478,7 +482,8 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         const wave = pointerOn && picked < 0 ? Math.exp(-((sx + cur[o + SHIFT] - pointerX) ** 2) / (P.waveRadius * P.waveRadius)) : 0;
         const mid = Math.exp(-((bx / (spacing * 0.9)) ** 2)); // 가운데 슬롯에 가까울수록 1
         let tshift = 0;
-        let ty = P.y - (1 - t) * P.rise + wave * P.waveLift - (1 - height[i]) * P.size[1] * 0.5;
+        const hiddenY = P.y - rise - (1 - height[i]) * P.size[1] * 0.5; // 등장 전 이 책의 숨은 높이
+        let ty = hiddenY + t * rise + wave * P.waveLift;
         let tz = zCenter * mid;
         let tyaw = restYaw * (1 - P.centerTurn * mid) - wave * P.waveYaw;
         let ts = 1;
@@ -489,7 +494,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
             tz = P.pickPush;
             tyaw = 0;
             ts = P.pickScale;
-          } else ty = P.y - P.rise;
+          } else ty = hiddenY;
         } else if (i === litRow) {
           ty += P.hoverLift;
           tz = zHover;
@@ -509,7 +514,8 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         mesh.position.set(sx + cur[o + SHIFT], cur[o + Y] - (1 - edge) * P.edgeSink, cur[o + Z]);
         mesh.rotation.y = cur[o + YAW];
         mesh.scale.set(s, s * height[i], s * thick[i]);
-        if (mesh.visible && cur[o + Y] > P.y - P.rise + 0.05) visible = true;
+        // 책마다 자기 숨은 높이 기준(키 큰 책은 숨은 자리가 기준보다 높아 p = 0에서도 pass 2가 켜지던 문제)
+        if (mesh.visible && cur[o + Y] > hiddenY + 0.05) visible = true;
       }
 
       // 툴팁은 호버한 책의 오른쪽 위에 붙인다 (값이 바뀔 때만 스타일을 쓴다)
@@ -526,7 +532,15 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       }
       if (DEBUG && (reportIn -= dt) <= 0) {
         reportIn = 0.25;
-        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}`);
+        // 가장 높이 올라온 책 윗면의 화면 y(px, 위에서부터). innerHeight보다 크면 화면 밖
+        let top = Infinity;
+        for (let i = 0; i < n; i++) {
+          if (!meshes[i].visible) continue;
+          const o = i * CH;
+          v.set(baseX[i] + cur[o + SHIFT], cur[o + Y] + P.size[1] * height[i] * 0.5 * cur[o + SCALE], cur[o + Z]).project(camera);
+          top = Math.min(top, (0.5 - v.y * 0.5) * innerHeight);
+        }
+        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  top ${Math.round(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}`);
       }
       return visible;
     },

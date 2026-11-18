@@ -43,7 +43,7 @@ export const PARAMS = {
   // 막대 높이는 장식용 오름세(실제 수치 아님). gap은 막대 사이 빈 비율, fill은 막대 면의 가시도, trendLift는 추세선이 막대 위로 뜨는 높이
   bars: { count: 8, width: 3.6, height: 2.6, base: -1.3, depth: 0.25, gap: 0.45, fill: 0.5, trendLift: 0.35 },
   // cut은 유리구가 목과 만나는 높이(반지름 비율), glass는 유리 가시도, filamentGlow는 1보다 크면 강조(점 확대 + insight 색)
-  bulb: { radius: 1.05, y: 0.55, cut: 0.81, neck: 0.55, baseRadius: 0.42, baseHeight: 0.55, turns: 4, glass: 0.6, filamentWidth: 0.56, coils: 5, filamentGlow: 1.8 },
+  bulb: { radius: 1.05, y: 0.55, cut: 0.81, neck: 0.55, baseRadius: 0.42, baseHeight: 0.55, turns: 4, glass: 0.6, filamentWidth: 0.56, coils: 5, filamentGlow: 1.4 },
   band: { width: 11, amp: 0.45, thickness: 0.5, depth: 1.2, freq: 0.9, speed: 0.3 },
 
   // 섹션 s0..s5가 쓰는 shape id. 이웃한 두 섹션 사이를 sec로 보간한다.

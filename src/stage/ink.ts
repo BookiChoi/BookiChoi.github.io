@@ -15,16 +15,17 @@ const FADE_MS = 400;
 const BLUR_EM = [0.035, 0.07]; // 글자 높이 지도 흐림 반경(글자 크기 비율): 작은 것(R, 윤곽 ≈ 0.5), 큰 것(G)
 const DPR_CAP = 1.5;
 const FIELD_SCALE = 0.25; // 마스크 필드 해상도(캔버스 픽셀 대비)
-const RADIUS_VW = [0.04, 0.07]; // 보이는 반경: 뷰포트 폭 비율(느림 → 빠름)
-const SPEED_MAX = 1600; // px/s: 이 속도에서 최대 반경
-const DROP_EVERY = 70; // 이 거리(px)마다 물방울 스탬프를 떨어뜨릴 기회
-const DROP_CHANCE = 0.45;
+const RADIUS_VW = [0.07, 0.11]; // 보이는 반경: 뷰포트 폭 비율(느림 → 빠름)
+const SPEED_MAX = 1200; // px/s: 이 속도에서 최대 반경, 튄 물감 최대
+const SPLAT_EVERY = 45; // 최대 속도에서 이 거리(px)마다 튄 물방울 1개. 느릴수록 속도 비율만큼 줄어든다
+const SPLAT_MAX = 6; // 이동 1번당 물방울 상한
+const SPLAT_SIZE = [0.05, 0.6]; // 물방울 반경: 메인 반경 비율(작은 쪽이 많다)
 const KEEP_RATE = 0.4; // 필드 감쇠: f × e^(−KEEP_RATE·t) − SUB_RATE·t. 약 1.8초 뒤 임계 아래로
 const SUB_RATE = 0.12;
 const BLUR_RATE = 12; // 블러 세기(1/s)
 const VIS_LIFE = 1.9; // 스탬프가 보이는 시간(초). 면적 추정용
 const STOP_MS = 2400; // 마지막 스탬프 뒤 이 시간이 지나면 필드를 지우고 루프를 멈춘다(보이는 잉크는 그 전에 이미 0%)
-const AREA_CAP = 0.25; // 잉크 면적 상한(화면 비율). 넘으면 스탬프 세기를 임계 아래로 줄인다
+const AREA_CAP = 0.35; // 잉크 면적 상한(화면 비율). 넘으면 스탬프 세기를 임계 아래로 줄인다
 const SHADOW_PX = [7, 10]; // 그림자 오프셋(오른쪽, 아래)
 const IDLE_MS = 2500; // 포인터 입력이 이만큼 없으면 자동 스윕 가능
 const SWEEP_GAP_MS = 14000;
@@ -159,6 +160,7 @@ export function initInk(canvas: HTMLCanvasElement): void {
   const seg = new Float32Array(MAX_STAMPS * 4);
   const rs = new Float32Array(MAX_STAMPS * 2);
   let stamps = 0;
+  let overflow = 0; // 칸이 모자라 이어 붙인 스탬프 수(debug 표시용)
   // 면적 추정: 최근 스탬프가 새로 덮은 넓이(px²)와 시각
   const areaBorn = new Float64Array(AREA_SLOTS).fill(-Infinity);
   const areaPx = new Float32Array(AREA_SLOTS);
@@ -213,10 +215,14 @@ export function initInk(canvas: HTMLCanvasElement): void {
     areaHead = (areaHead + 1) % AREA_SLOTS;
   };
 
+  const capStrength = () => 1 - 0.75 * clamp01((areaEst / AREA_CAP - 1) / 0.15);
+  const capRadius = () => 1 - 0.5 * clamp01((areaEst / AREA_CAP - 0.6) / 0.4);
+
   /** 스탬프 1개(선분 a→b, 보이는 반경 vis). 한 프레임에 MAX_STAMPS를 넘으면 마지막 선분을 늘린다 */
   const stamp = (x0: number, y0: number, x1: number, y1: number, vis: number, now: number, dot: boolean) => {
-    // 면적 상한: 추정 면적이 상한의 80%를 넘으면 세기를 줄이고, 상한에서는 임계(0.46) − 노이즈 아래로 내린다
-    const s = 1 - 0.75 * clamp01((areaEst / AREA_CAP - 0.8) / 0.2);
+    // 면적 상한: 상한의 60%부터는 반경을 줄이고(moveTo), 상한을 넘으면 세기를 임계(0.46) − 노이즈 아래로 내린다.
+    // 빠르게 움직이는 동안에도 마스크가 진하게 보이도록 세기는 마지막에만 깎는다
+    const s = capStrength();
     const shown = clamp01((s - 0.3) / 0.7);
     const len = Math.hypot(x1 - x0, y1 - y0);
     addArea((len * 2 * vis + (dot ? Math.PI * vis * vis : 0)) * shown, now);
@@ -226,6 +232,8 @@ export function initInk(canvas: HTMLCanvasElement): void {
     }
     let k = stamps;
     if (k === MAX_STAMPS) {
+      overflow++;
+      if (dot) return; // 물방울은 칸이 없으면 버린다(이어 붙이면 엉뚱한 선분이 된다)
       k = MAX_STAMPS - 1;
       x0 = seg[k * 4];
       y0 = seg[k * 4 + 1];
@@ -253,17 +261,20 @@ export function initInk(canvas: HTMLCanvasElement): void {
       flowVY += (dy / dtp / Math.min(w, h) - flowVY) * 0.2;
     }
     const speed = fixedSpeed >= 0 ? fixedSpeed : pen.speed;
-    const vis = w * (RADIUS_VW[0] + (RADIUS_VW[1] - RADIUS_VW[0]) * clamp01(speed / SPEED_MAX));
+    const vis = w * (RADIUS_VW[0] + (RADIUS_VW[1] - RADIUS_VW[0]) * clamp01(speed / SPEED_MAX)) * capRadius();
     stamp(first ? x : pen.x, first ? y : pen.y, x, y, vis, now, first);
-    // 물방울: 궤적 옆에 작은 원
-    dropAcc += dist;
-    while (dropAcc > DROP_EVERY && dist > 0) {
-      dropAcc -= DROP_EVERY;
-      if (Math.random() > DROP_CHANCE) continue;
-      const side = (Math.random() < 0.5 ? -1 : 1) * vis * (1.1 + Math.random() * 0.5);
-      const r = vis * (0.25 + Math.random() * 0.2);
-      const ox = x - (dx / dist) * Math.random() * dist - (dy / dist) * side;
-      const oy = y - (dy / dist) * Math.random() * dist + (dx / dist) * side;
+    // 튄 물감: 속도에 비례한 개수를 진행 방향 앞·옆으로 던진다. 제자리에 찍히고 필드 감쇠로 사라진다
+    if (dist > 0) dropAcc = Math.min(SPLAT_MAX, dropAcc + (dist / SPLAT_EVERY) * clamp01(speed / SPEED_MAX));
+    const ux = dist > 0 ? dx / dist : 0;
+    const uy = dist > 0 ? dy / dist : 0;
+    for (; dropAcc >= 1; dropAcc--) {
+      const u = Math.random();
+      const r = vis * (SPLAT_SIZE[0] + (SPLAT_SIZE[1] - SPLAT_SIZE[0]) * u * u);
+      const far = 1 - u * u * 0.6; // 작은 방울일수록 멀리
+      const ahead = vis * (0.2 + 1.6 * Math.random()) * far;
+      const side = (Math.random() < 0.5 ? -1 : 1) * vis * (0.9 + 1.4 * Math.random()) * far;
+      const ox = x + ux * ahead - uy * side;
+      const oy = y + uy * ahead + ux * side;
       stamp(ox, oy, ox, oy, r, now, true);
     }
     pen.has = true;
@@ -431,7 +442,7 @@ export function initInk(canvas: HTMLCanvasElement): void {
 
     if (DEBUG && now >= nextReport) {
       nextReport = now + 250;
-      debugLine('ink', `ink run  ${label()}  area~${Math.round(areaEst * 100)}%  ${useHalf ? 'R16F' : 'RGBA8'}`);
+      debugLine('ink', `ink run  ${label()}  area~${Math.round(areaEst * 100)}%  cap s ${capStrength().toFixed(2)} r ${capRadius().toFixed(2)}  full ${overflow}  ${useHalf ? 'R16F' : 'RGBA8'}`);
     }
     if (sweepStart < 0 && now - lastStamp > STOP_MS) {
       // 필드는 이미 임계 아래다. 0으로 지우고 깨끗한 프레임(배경 + 검정 글자)을 남긴 뒤 멈춘다

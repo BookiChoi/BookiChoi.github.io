@@ -9,7 +9,7 @@ void main() {
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
-export const MAX_STAMPS = 8;
+export const MAX_STAMPS = 24;
 
 // 마스크 필드 갱신(저해상도 ping-pong): 약한 블러 → 감쇠(곱 + 선형) → 이번 프레임의 캡슐 스탬프를 max로 누적.
 // 선형 감쇠항이 8비트 텍스처에서도 값이 0까지 내려가게 한다.
