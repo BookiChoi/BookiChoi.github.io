@@ -183,42 +183,7 @@ const THEMES: Record<string, Theme> = {
       }
     },
   },
-  // 청록 → 초록 그라데이션: 앱 아이콘 격자와 별점 히스토그램
-  'google-play': {
-    spine: '#0b8a6e',
-    back: '#0a7a62',
-    ink: '#effff8',
-    paint(x, rand) {
-      gradient(x, '#14b8a6', '#22a55a', W, H);
-      for (let row = 0; row < 3; row++) {
-        for (let col = 0; col < 4; col++) {
-          x.fillStyle = `rgba(255, 255, 255, ${(0.25 + rand() * 0.6).toFixed(2)})`;
-          roundRect(x, 66 + col * 98, 70 + row * 98, 76, 76, 20); // 앱 아이콘 자리(도형만)
-        }
-      }
-      for (let i = 0; i < 5; i++) {
-        const y = 410 + i * 42;
-        x.fillStyle = '#fff8d6';
-        star(x, 82, y + 12, 12);
-        x.fillStyle = 'rgba(255, 255, 255, 0.25)';
-        roundRect(x, 110, y, 330, 22, 11);
-        x.fillStyle = '#fff8d6';
-        roundRect(x, 110, y, 330 * (0.85 - i * 0.16 + rand() * 0.06), 22, 11); // 막대 길이는 장식
-      }
-    },
-  },
 };
-
-function star(x: Ctx, cx: number, cy: number, r: number) {
-  x.beginPath();
-  for (let i = 0; i < 10; i++) {
-    const a = -Math.PI / 2 + (i * Math.PI) / 5;
-    const rr = i % 2 ? r * 0.45 : r;
-    x.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
-  }
-  x.closePath();
-  x.fill();
-}
 
 // 알 수 없는 slug: coverHue 그라데이션 + 사선 줄무늬
 const fallback = (hue: number): Theme => ({
