@@ -111,7 +111,8 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
     const ZMIN = 0.06;
     const SPEED = 0.035; // 깊이 단위/초(평소)
     let W = 0, H = 0, F = 1, CX = 0, CY = 0, off = 0, t = 0;
-    let boost = 1; // 워프 때 별 속도 배율
+    let boost = 1; // 워프 때 별 속도 배율(음수면 뒤로)
+    let lastDir = 1; // 마지막 워프 방향: 평소 속도로 돌아가는 빠르기(열기 3, 닫기 5)
     type Star = { u: number; v: number; z: number; r0: number; a: number; c: string; glow: boolean; age: number; w: number; p: number };
     let stars: Star[] = [];
     let clusters: { x: number; y: number; s: number }[] = [];
@@ -130,6 +131,18 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
       s.v = ((y - CY) * z + off) / F;
       s.z = z;
       s.age = reduce ? 9 : 0; // 새 별은 투명에서 서서히 밝아진다
+    };
+    // 뒤로 물러날 때(boost < 0): 화면 가장자리 바로 바깥의 가까운 깊이에서 다시 생겨 안으로 흘러 들어온다
+    const ZMAX = 1.15;
+    const spawnEdge = (s: Star) => {
+      const m = rnd(10, 60), side = Math.floor(Math.random() * 4);
+      const x = side === 0 ? -m : side === 1 ? W + m : rnd(-m, W + m);
+      const y = side === 2 ? -m : side === 3 ? H + m : rnd(-m, H + m);
+      const z = rnd(0.15, 0.4);
+      s.u = ((x - CX) * z) / F;
+      s.v = ((y - CY) * z + off) / F;
+      s.z = z;
+      s.age = 9; // 화면 밖에서 들어오므로 바로 보여도 튀지 않는다
     };
     const glowImg = document.createElement('canvas');
     glowImg.width = glowImg.height = 32;
@@ -164,21 +177,27 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
       off = Math.max(0, -sec.getBoundingClientRect().top) * 0.03; // S6 안 스크롤: 시선을 조금 올린다(가까운 별이 더 움직임)
       ctx.clearRect(0, 0, W, H);
       ctx.lineCap = 'round';
-      const streak = boost > 2;
+      const streak = Math.abs(boost) > 2;
       for (const s of stars) {
         s.z -= SPEED * boost * dt;
         s.age += dt;
         const x = CX + (s.u * F) / s.z, y = CY + (s.v * F - off) / s.z;
-        if (s.z < ZMIN || x < -20 || x > W + 20 || y < -20 || y > H + 20) {
+        if (boost < 0) {
+          // 뒤로: 별이 소실점으로 모인다. 화면 밖 별은 안으로 들어오는 중이라 지우지 않는다
+          if (s.z > ZMAX) {
+            spawnEdge(s);
+            continue;
+          }
+        } else if (s.z < ZMIN || x < -20 || x > W + 20 || y < -20 || y > H + 20) {
           spawn(s, rnd(0.85, 1));
           continue;
         }
         const r = Math.max(0.45, Math.min(1.8, s.r0 / s.z));
-        const al = s.a * (0.5 + 0.5 * (1 - s.z)) * Math.min(1, s.age / 1.5) * (reduce ? 1 : 0.85 + 0.15 * Math.sin(s.w * t + s.p));
+        const al = s.a * Math.max(0, 0.5 + 0.5 * (1 - s.z)) * Math.min(1, s.age / 1.5) * (reduce ? 1 : 0.85 + 0.15 * Math.sin(s.w * t + s.p));
         ctx.globalAlpha = al;
         if (streak) {
-          // 모션 트레일: 조금 더 먼 깊이의 투영 위치에서 지금 위치까지
-          const zb = s.z + SPEED * boost * 0.08;
+          // 모션 트레일: 지나온 깊이의 투영 위치에서 지금 위치까지(앞으로면 소실점 쪽, 뒤로면 바깥쪽에 꼬리)
+          const zb = Math.max(s.z * 0.5, s.z + SPEED * boost * 0.08);
           ctx.strokeStyle = s.c;
           ctx.lineWidth = 2 * r;
           ctx.beginPath();
@@ -398,10 +417,11 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
       const dt = Math.min((now - last) / 1000, 1 / 30);
       last = now;
       t += dt;
-      // 워프 구간에 별이 빨라졌다가(줄무늬), 끝나면 천천히 원래 속도로
+      // 워프 구간에 별이 빨라졌다가(줄무늬, 열기는 앞으로 +18 / 닫기는 뒤로 −18), 끝나면 원래 속도(+1)로
       const tau = warp ? now - warp.t0 : -1;
+      if (warp) lastDir = warp.dir;
       const hot = !!warp && (warp.dir > 0 ? tau > WARP_SHAKE - 50 && tau < WARP_SHAKE + WARP_FLY : tau < WARP_FLY + 50);
-      boost += ((hot ? 18 : 1) - boost) * (1 - Math.exp(-dt * (hot ? 8 : 3)));
+      boost += ((hot ? lastDir * 18 : 1) - boost) * (1 - Math.exp(-dt * (hot ? 8 : lastDir > 0 ? 3 : 5)));
       drawStars(dt);
       drawWarp(now);
       if (state === 'closed') moveBadges(dt);
