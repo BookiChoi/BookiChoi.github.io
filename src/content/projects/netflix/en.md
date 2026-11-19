@@ -8,43 +8,43 @@ attribution:
   - "TODO: 내 확인 필요"
 ---
 
-## 한 줄 결론
+## The answer first
 
 TODO: 내 확인 필요
 
-## 기업과 맥락
+## Why this company
 
 TODO: 내 확인 필요
 
-## 데이터셋과 선택 이유
+## The data, and why
 
 TODO: 내 확인 필요
 
-## 질문과 의사결정 연결
+## The question behind the decision
 
 TODO: 내 확인 필요
 
-## 사전 판정 규칙
+## The rule, set in advance
 
 TODO: 내 확인 필요
 
-## 분석 방법
+## How I tested it
 
 TODO: 내 확인 필요
 
-## 인사이트와 차트
+## What I found
 
 TODO: 내 확인 필요
 
-## 한계와 다음 할 일
+## What it can't tell you
 
 TODO: 내 확인 필요
 
-## 내가 결정한 것과 AI가 한 것
+## Me and my AI agents
 
 TODO: 내 확인 필요
 
-## 데이터 출처와 라이선스
+## Sources and licenses
 
 TODO: 내 확인 필요
 
