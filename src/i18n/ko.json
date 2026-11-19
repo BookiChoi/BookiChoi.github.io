@@ -43,5 +43,7 @@
   "contents": "목차",
   "prevProject": "이전 프로젝트",
   "nextProject": "다음 프로젝트",
-  "chooseLanguage": "언어 선택"
+  "chooseLanguage": "언어 선택",
+  "metaTitle": "Booki Choi — 비즈니스 애널리스트",
+  "metaDescription": "Booki Choi, 프론트엔드 개발자에서 비즈니스 애널리스트로. 결정에서 시작하고, 분석 전에 질문하고, 데이터를 방향으로 바꿉니다."
 }

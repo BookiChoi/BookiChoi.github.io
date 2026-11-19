@@ -54,7 +54,7 @@ const books = JSON.stringify(
   })),
 ).replace(/</g, '\\u003c');
 ---
-<Base lang={lang} path="/" description={t.intro}>
+<Base lang={lang} path="/" fullTitle={t.metaTitle} description={t.metaDescription}>
   <Stage />
   <header class="site-header">
     <a class="label" href={`/${lang}/`} aria-label={SITE_NAME}>{SITE_SHORT}</a>
