@@ -1,5 +1,6 @@
 ---
 title: "Airbnb NYC (working title)"
+summary: "Four questions on Airbnb in New York: where the revenue is, whether growth is real, who carries regulatory risk, and who to contact first. Concentration came up in three of the four answers."
 coverHue: 350
 order: 2
 status: planned

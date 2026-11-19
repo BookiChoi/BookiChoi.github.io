@@ -1,5 +1,6 @@
 ---
 title: "NYC Congestion Pricing"
+summary: "Four questions on NYC taxi and ride-hail trips. The last: after congestion pricing began, did the share of trips touching the zone fall? It fell for both, but this before/after design can't separate the toll from trend, season or data changes."
 coverHue: 225
 order: 4
 status: planned

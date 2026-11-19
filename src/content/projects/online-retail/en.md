@@ -1,5 +1,6 @@
 ---
 title: "Online Retail (working title)"
+summary: "Five questions on an online retailer's orders, from where to who. Concentration showed up in countries, products and customers."
 coverHue: 150
 order: 3
 status: planned

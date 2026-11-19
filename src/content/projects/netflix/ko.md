@@ -1,5 +1,6 @@
 ---
 title: "Netflix (working title)"
+summary: "장르 그룹별 넷플릭스 시청 시간 비중이 반기마다 번갈아 오르내릴까? 분석 전에 규칙을 먼저 정했고, 검정한 장르 그룹 중 통과한 곳은 없었습니다."
 coverHue: 210
 order: 1
 status: planned

@@ -1,5 +1,6 @@
 ---
 title: "Netflix (working title)"
+summary: "Do genre groups take turns gaining and losing Netflix viewing hours by half-year? I set the rule before the analysis. No tested group passed."
 coverHue: 210
 order: 1
 status: planned

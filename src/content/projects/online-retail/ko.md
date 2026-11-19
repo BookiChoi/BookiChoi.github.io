@@ -1,5 +1,6 @@
 ---
 title: "Online Retail (working title)"
+summary: "온라인 소매업 주문 데이터에 다섯 가지를 물었습니다. 어디서, 언제, 무엇이, 얼마에, 누가. 국가, 상품, 고객에서 집중이 나타났습니다."
 coverHue: 150
 order: 3
 status: planned

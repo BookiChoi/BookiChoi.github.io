@@ -1,5 +1,6 @@
 ---
 title: "Airbnb NYC (working title)"
+summary: "뉴욕 에어비앤비에 네 가지를 물었습니다. 매출은 어디에 있나, 성장은 진짜인가, 규제 리스크는 누구에게 있나, 누구부터 접촉하나. 네 답 중 셋에서 집중이 나왔습니다."
 coverHue: 350
 order: 2
 status: planned
