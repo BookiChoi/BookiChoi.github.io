@@ -92,6 +92,13 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
   const canvas = sec?.querySelector<HTMLCanvasElement>('.s6-stars');
   const layer = sec?.querySelector<HTMLElement>('.s6-badges');
   const ctx = canvas?.getContext('2d');
+  // S6 맨 위를 8px 넘게 지난 안쪽에서만 proximity(stage.css). 매번 rect로 재서 resize·주소창 변화에 따로 대응하지 않는다
+  if (sec) {
+    const inside = () => document.documentElement.classList.toggle('s6-inside', sec.getBoundingClientRect().top < -8);
+    addEventListener('scroll', inside, { passive: true });
+    addEventListener('resize', inside);
+    inside();
+  }
   if (sec && story && panel && openBtn && closeBtn && canvas && layer && ctx) {
     const root = document.documentElement;
     root.classList.add('skills-on');
