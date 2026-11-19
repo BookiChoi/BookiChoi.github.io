@@ -189,6 +189,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   let pointerOn = false;
   let tipX = -1;
   let tipY = -1;
+  let navLeft = -1; // 섹션 점 영역의 왼쪽 끝(툴팁이 그 위로 넘어가지 않게). resize에서 다시 잰다
   let reportIn = 0;
   let tapId = -1; // 모바일 탭: 누른 pointerId, 위치, 시각
   let tapX = 0;
@@ -499,6 +500,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     scene,
     camera,
     resize(aspect) {
+      navLeft = -1;
       // 데스크톱은 고리 전체가, 모바일은 책 몇 권이 화면 폭에 들어오는 거리
       const width = opts.mobile ? P.mobileVisible * spacing : (n - 1) * spacing + P.size[0] * 1.3;
       const tan = Math.tan((P.fov * Math.PI) / 360);
@@ -613,8 +615,13 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       if (tip && !tip.hidden && litRow >= 0) {
         const o = litRow * CH;
         v.set(baseX[litRow] + cur[o + SHIFT] + P.size[0] * 0.62, cur[o + Y] + P.size[1] * 0.25, cur[o + Z]).project(camera);
-        const x = Math.round(Math.min(innerWidth - tip.offsetWidth - 12, (v.x * 0.5 + 0.5) * innerWidth));
-        const y = Math.round(Math.max(12, (0.5 - v.y * 0.5) * innerHeight));
+        if (navLeft < 0) {
+          const r = document.querySelector('.section-nav')?.getBoundingClientRect();
+          navLeft = r && r.width > 0 ? r.left : innerWidth; // 없거나 숨김(폭 0)이면 화면 오른쪽 끝 기준
+        }
+        const x = Math.round(Math.min(navLeft - tip.offsetWidth - 12, (v.x * 0.5 + 0.5) * innerWidth));
+        // 아래쪽을 먼저, 위쪽을 나중에 막는다: 창보다 키가 커도 제목이 보이게
+        const y = Math.round(Math.max(12, Math.min(innerHeight - tip.offsetHeight - 12, (0.5 - v.y * 0.5) * innerHeight)));
         if (x !== tipX || y !== tipY) {
           tipX = x;
           tipY = y;
