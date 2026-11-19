@@ -1,7 +1,8 @@
 ---
 // S6(ABOUT): 소개 글 + 스킬. 스킬의 원본은 그룹별 <ul>(스크린리더, JS 꺼짐에서 그대로 보임).
-// JS가 있으면: S6 전용 별 배경(canvas 2D)과 로고 배지 사본(aria-hidden)이 떠다니고, "스킬 보기"를 누르면
-// 소개 글이 다가오며 사라지고 사본이 스킬 화면(헤더 아래 고정 오버레이, 페이지 높이 불변)의 각 li 자리로 모인다.
+// JS가 있으면: S6 전용 3D 원근 별밭(canvas 2D)과 로고 배지 사본(aria-hidden)이 떠다니고, "스킬 보기"를 누르면
+// 소개 글이 점 입자로 쪼개져 워프로 지나가고(실패·reduced-motion이면 블록 페이드) 사본이 스킬 화면
+// (헤더 아래 고정 오버레이, 페이지 높이 불변)의 각 li 자리로 모인다. 닫으면 역순.
 // 로고는 빌드 때 simple-icons에서 SVG path와 브랜드 색을 꺼내 인라인한다(클라이언트 번들에는 없음).
 import * as si from 'simple-icons';
 import type { SimpleIcon } from 'simple-icons';
@@ -103,10 +104,43 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
     const FADE = 250; // 사본 ↔ li 교차 페이드
     const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
-    // --- 별(canvas 2D): 두 겹 시차 + 아주 느린 반짝임. S5 점 구름보다 작고 차갑다 ---
-    const COLORS = ['#e6ecff', '#cfd8ff', '#b8c6ff', '#9fb2ff'];
-    let W = 0, H = 0;
-    let stars: { x: number; y: number; r: number; a: number; k: number; w: number; p: number; v: number; c: string }[] = [];
+    // --- 3D 원근 별밭(canvas 2D): 별마다 화면 방향 (u, v)와 깊이 z. 화면 위치 = 중심 + (u, v)·F / z ---
+    // 천천히 카메라 쪽으로 다가오고(가까울수록 크고 밝고 빠름), 지나가거나 화면을 벗어나면 먼 곳에서 다시 생긴다.
+    // 절반 남짓은 군집(가우시안)에서, 나머지는 균등하게 생겨 빽빽한 곳과 빈 곳이 섞인다.
+    const COLORS = ['#e6ecff', '#cfd8ff', '#b8c6ff', '#9fb2ff', '#c6b8ff', '#b0a4f5'];
+    const ZMIN = 0.06;
+    const SPEED = 0.035; // 깊이 단위/초(평소)
+    let W = 0, H = 0, F = 1, CX = 0, CY = 0, off = 0, t = 0;
+    let boost = 1; // 워프 때 별 속도 배율
+    type Star = { u: number; v: number; z: number; r0: number; a: number; c: string; glow: boolean; age: number; w: number; p: number };
+    let stars: Star[] = [];
+    let clusters: { x: number; y: number; s: number }[] = [];
+    const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 2; // 근사 정규분포(표준편차 1)
+    const spawn = (s: Star, z: number) => {
+      let x: number, y: number;
+      if (Math.random() < 0.55) {
+        const k = clusters[Math.floor(Math.random() * clusters.length)];
+        x = k.x + gauss() * k.s;
+        y = k.y + gauss() * k.s;
+      } else {
+        x = rnd(0, W);
+        y = rnd(0, H);
+      }
+      s.u = ((x - CX) * z) / F;
+      s.v = ((y - CY) * z + off) / F;
+      s.z = z;
+      s.age = reduce ? 9 : 0; // 새 별은 투명에서 서서히 밝아진다
+    };
+    const glowImg = document.createElement('canvas');
+    glowImg.width = glowImg.height = 32;
+    const gctx = glowImg.getContext('2d');
+    if (gctx) {
+      const g = gctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+      g.addColorStop(0, 'rgba(210, 218, 255, 1)');
+      g.addColorStop(1, 'rgba(210, 218, 255, 0)');
+      gctx.fillStyle = g;
+      gctx.fillRect(0, 0, 32, 32);
+    }
     const sizeStars = () => {
       const dpr = Math.min(devicePixelRatio || 1, 2);
       W = canvas.clientWidth;
@@ -114,30 +148,201 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
       canvas.width = Math.round(W * dpr);
       canvas.height = Math.round(H * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const count = narrow() ? 64 : 120;
-      stars = Array.from({ length: count }, () => {
-        const near = Math.random() < 0.3;
-        return {
-          x: rnd(0, W), y: rnd(0, H),
-          r: near ? rnd(0.8, 1.3) : rnd(0.4, 0.8),
-          a: near ? rnd(0.35, 0.6) : rnd(0.2, 0.45),
-          k: near ? 0.12 : 0.04, // S6 안 스크롤 양에 대한 시차
-          v: near ? rnd(2, 3) : rnd(1, 2), // 자체 표류 px/s
-          w: rnd(0.2, 0.6), p: rnd(0, Math.PI * 2),
-          c: COLORS[Math.floor(Math.random() * COLORS.length)],
-        };
+      F = Math.max(W, H) * 0.5;
+      CX = W / 2;
+      CY = Math.min(H, innerHeight) / 2;
+      off = 0;
+      clusters = Array.from({ length: 6 + Math.floor(Math.random() * 4) }, () => ({ x: rnd(0, W), y: rnd(0, H), s: rnd(0.04, 0.12) * Math.min(W, H) }));
+      stars = Array.from({ length: narrow() ? 200 : 450 }, () => {
+        const s: Star = { u: 0, v: 0, z: 1, r0: rnd(0.22, 0.36), a: rnd(0.45, 0.75), c: COLORS[Math.floor(Math.random() * COLORS.length)], glow: Math.random() < 0.3, age: 0, w: rnd(0.3, 0.9), p: rnd(0, 6.3) };
+        spawn(s, rnd(ZMIN * 2, 1));
+        s.age = 9; // 처음 별들은 바로 보인다
+        return s;
       });
     };
-    const drawStars = (t: number) => {
-      const off = -sec.getBoundingClientRect().top;
+    const drawStars = (dt: number) => {
+      off = Math.max(0, -sec.getBoundingClientRect().top) * 0.03; // S6 안 스크롤: 시선을 조금 올린다(가까운 별이 더 움직임)
       ctx.clearRect(0, 0, W, H);
+      ctx.lineCap = 'round';
+      const streak = boost > 2;
       for (const s of stars) {
-        const y = (((s.y - off * s.k - s.v * t) % H) + H) % H;
-        ctx.globalAlpha = s.a * (reduce ? 1 : 0.7 + 0.3 * Math.sin(s.w * t + s.p));
-        ctx.fillStyle = s.c;
-        ctx.beginPath();
-        ctx.arc(s.x, y, s.r, 0, Math.PI * 2);
-        ctx.fill();
+        s.z -= SPEED * boost * dt;
+        s.age += dt;
+        const x = CX + (s.u * F) / s.z, y = CY + (s.v * F - off) / s.z;
+        if (s.z < ZMIN || x < -20 || x > W + 20 || y < -20 || y > H + 20) {
+          spawn(s, rnd(0.85, 1));
+          continue;
+        }
+        const r = Math.max(0.45, Math.min(1.8, s.r0 / s.z));
+        const al = s.a * (0.5 + 0.5 * (1 - s.z)) * Math.min(1, s.age / 1.5) * (reduce ? 1 : 0.85 + 0.15 * Math.sin(s.w * t + s.p));
+        ctx.globalAlpha = al;
+        if (streak) {
+          // 모션 트레일: 조금 더 먼 깊이의 투영 위치에서 지금 위치까지
+          const zb = s.z + SPEED * boost * 0.08;
+          ctx.strokeStyle = s.c;
+          ctx.lineWidth = 2 * r;
+          ctx.beginPath();
+          ctx.moveTo(CX + (s.u * F) / zb, CY + (s.v * F - off) / zb);
+          ctx.lineTo(x, y);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = s.c;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (s.glow && s.z < 0.35) {
+          const g = r * 8;
+          ctx.globalAlpha = al * 0.3;
+          ctx.drawImage(glowImg, x - g / 2, y - g / 2, g, g);
+        }
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    // --- 글 → 점: 화면에 보이는 소개 글을 오프스크린 canvas에 같은 위치·폰트로 다시 그려 픽셀을 샘플링한다 ---
+    // 열 때와 닫을 때마다 새로 잰다(그 순간의 레이아웃과 폰트라 폰트 늦은 로드·resize에 따로 대응할 필요가 없다).
+    type Warp = { t0: number; dir: 1 | -1; n: number; b: Float32Array; ci: Uint8Array; cols: string[]; size: number; cx: number; cy: number };
+    let warp: Warp | null = null;
+    const WARP_SHAKE = 250, WARP_FLY = 700, WARP_FADE = 200;
+    const sampleText = (): Omit<Warp, 't0' | 'dir'> | null => {
+      const cr = canvas.getBoundingClientRect();
+      const vw = Math.ceil(cr.width), vh = Math.ceil(Math.min(cr.height, innerHeight - cr.top));
+      if (vw < 1 || vh < 1) return null;
+      const oc = document.createElement('canvas');
+      oc.width = vw;
+      oc.height = vh;
+      const c = oc.getContext('2d', { willReadFrequently: true });
+      if (!c) return null;
+      c.globalCompositeOperation = 'lighter'; // 글 색마다 채널을 나눠 그린다(R, G, B = 색 0, 1, 2)
+      const CH = ['#f00', '#0f0', '#00f'];
+      const cols: string[] = [];
+      const range = document.createRange();
+      for (const el of story.querySelectorAll<HTMLElement>('.s6-out')) {
+        const er = el.getBoundingClientRect();
+        if (er.bottom < cr.top || er.top > cr.top + vh) continue;
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+          const tn = node;
+          const cs = getComputedStyle(tn.parentElement!);
+          let ci = cols.indexOf(cs.color);
+          if (ci < 0) ci = cols.length < 3 ? cols.push(cs.color) - 1 : 0;
+          c.fillStyle = c.strokeStyle = CH[ci];
+          c.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+          const perChar = !!parseFloat(cs.letterSpacing); // 자간이 있으면 글자 단위로 위치를 잰다('normal' → NaN)
+          const upper = cs.textTransform === 'uppercase';
+          const chars = (s: number, e: number) => {
+            for (let i = s; i < e; ) {
+              const l = tn.data.codePointAt(i)! > 0xffff ? 2 : 1;
+              put(i, i + l, true);
+              i += l;
+            }
+          };
+          const put = (s: number, e: number, single = false) => {
+            range.setStart(tn, s);
+            range.setEnd(tn, e);
+            const rs = range.getClientRects();
+            if (rs.length !== 1 && !single) return chars(s, e); // 줄이 나뉜 단어
+            const r = rs[0];
+            if (!r || !r.width) return;
+            const str = upper ? tn.data.slice(s, e).toUpperCase() : tn.data.slice(s, e);
+            const asc = c.measureText(str).fontBoundingBoxAscent ?? r.height * 0.8;
+            c.fillText(str, r.left - cr.left, r.top - cr.top + asc);
+          };
+          for (const m of tn.data.matchAll(/\S+/g)) {
+            if (perChar) chars(m.index!, m.index! + m[0].length);
+            else put(m.index!, m.index! + m[0].length);
+          }
+        }
+        if (el instanceof HTMLButtonElement) {
+          c.lineWidth = 1;
+          c.beginPath();
+          c.roundRect(er.left - cr.left + 0.5, er.top - cr.top + 0.5, er.width - 1, er.height - 1, er.height / 2);
+          c.stroke();
+        }
+      }
+      const d = c.getImageData(0, 0, vw, vh).data;
+      const filled: number[] = [];
+      for (let i = 0, p = 0; i < d.length; i += 4, p++) if (d[i] > 128 || d[i + 1] > 128 || d[i + 2] > 128) filled.push(p);
+      if (!filled.length) return null;
+      // 격자 칸마다 글 픽셀 하나: 칸 수가 상한 근처가 되도록 간격을 키운 뒤, 남는 것은 무작위로 덜어 상한을 지킨다
+      const MAX = narrow() ? 1500 : 3500;
+      let g = Math.max(1, Math.floor(Math.sqrt(filled.length / MAX)));
+      let picked: number[] = [];
+      for (;; g++) {
+        const cw = Math.ceil(vw / g);
+        const seen = new Uint8Array(cw * Math.ceil(vh / g));
+        picked = [];
+        for (const p of filled) {
+          const cell = Math.floor((p % vw) / g) + Math.floor(Math.floor(p / vw) / g) * cw;
+          if (!seen[cell]) {
+            seen[cell] = 1;
+            picked.push(p);
+          }
+        }
+        if (picked.length <= MAX * 1.2) break;
+      }
+      for (let i = 0; i < Math.min(MAX, picked.length); i++) {
+        const j = i + Math.floor(Math.random() * (picked.length - i));
+        [picked[i], picked[j]] = [picked[j], picked[i]];
+      }
+      picked.length = Math.min(MAX, picked.length);
+      const chan = (p: number) => (d[p * 4] > 128 ? 0 : d[p * 4 + 1] > 128 ? 1 : 2);
+      picked.sort((a, b) => chan(a) - chan(b)); // 색이 바뀔 때만 fillStyle을 바꾸게
+      const n = picked.length;
+      const b = new Float32Array(n * 7); // x0, y0, 흩어짐 방향 dx, dy, 속도 계수 k, 이전 x, 이전 y
+      const ci = new Uint8Array(n);
+      picked.forEach((p, i) => {
+        const a = Math.random() * Math.PI * 2;
+        b.set([(p % vw) + 0.5, Math.floor(p / vw) + 0.5, Math.cos(a) * rnd(0.3, 1), Math.sin(a) * rnd(0.3, 1), rnd(0.75, 1.3), NaN, NaN], i * 7);
+        ci[i] = chan(p);
+      });
+      return { n, b, ci, cols, size: Math.min(2.4, Math.max(1.1, g * 0.55)), cx: CX, cy: CY };
+    };
+    // 열기: 떨림·흩어짐(WARP_SHAKE) → 소실점에서 바깥으로 가속하며 커지고 흐려져 지나간다(WARP_FLY).
+    // 닫기: 같은 공식을 거꾸로(바깥에서 감속하며 수렴) → 떨림이 가라앉고 → DOM 글과 교차 페이드(WARP_FADE).
+    const drawWarp = (now: number) => {
+      if (!warp) return;
+      const w = warp, tau = now - w.t0;
+      let u: number, sc: number, al: number;
+      if (w.dir > 0) {
+        sc = 1 - (1 - Math.min(1, tau / WARP_SHAKE)) ** 2;
+        u = Math.max(0, (tau - WARP_SHAKE) / WARP_FLY);
+        if (u >= 1) {
+          warp = null;
+          return;
+        }
+        al = (1 - u) ** 1.4;
+      } else {
+        u = Math.max(0, 1 - tau / WARP_FLY);
+        sc = (1 - Math.min(1, Math.max(0, tau - WARP_FLY) / WARP_SHAKE)) ** 2;
+        al = (1 - u) ** 1.4 * Math.max(0, 1 - Math.max(0, tau - WARP_FLY - WARP_SHAKE) / WARP_FADE);
+        if (al <= 0) return;
+      }
+      const e = u * u, b = w.b, shake = u === 0 ? sc * 1.2 : 0;
+      ctx.globalAlpha = al;
+      ctx.lineCap = 'round';
+      let col = -1;
+      for (let i = 0, o = 0; i < w.n; i++, o += 7) {
+        if (w.ci[i] !== col) {
+          col = w.ci[i];
+          ctx.fillStyle = ctx.strokeStyle = w.cols[col];
+        }
+        const bx = b[o] + b[o + 2] * 6 * sc + (shake ? (Math.random() - 0.5) * shake : 0);
+        const by = b[o + 1] + b[o + 3] * 6 * sc + (shake ? (Math.random() - 0.5) * shake : 0);
+        const z = 1 - 0.94 * Math.min(1, e * b[o + 4]);
+        const x = w.cx + (bx - w.cx) / z, y = w.cy + (by - w.cy) / z;
+        const s = Math.min(8, w.size / z);
+        const px = b[o + 5], py = b[o + 6];
+        if (u > 0 && px === px && Math.abs(x - px) + Math.abs(y - py) > s) {
+          ctx.lineWidth = s * 0.7;
+          ctx.beginPath();
+          ctx.moveTo(px, py);
+          ctx.lineTo(x, y);
+          ctx.stroke();
+        } else ctx.fillRect(x - s / 2, y - s / 2, s, s);
+        b[o + 5] = x;
+        b[o + 6] = y;
       }
       ctx.globalAlpha = 1;
     };
@@ -187,17 +392,22 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
 
     // --- 루프: S6가 화면에 있을 때만 ---
     let state: 'closed' | 'opening' | 'open' | 'closing' = 'closed';
-    let visible = false, raf = 0, last = 0, t = 0;
+    let visible = false, raf = 0, last = 0;
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       const dt = Math.min((now - last) / 1000, 1 / 30);
       last = now;
       t += dt;
-      drawStars(t);
+      // 워프 구간에 별이 빨라졌다가(줄무늬), 끝나면 천천히 원래 속도로
+      const tau = warp ? now - warp.t0 : -1;
+      const hot = !!warp && (warp.dir > 0 ? tau > WARP_SHAKE - 50 && tau < WARP_SHAKE + WARP_FLY : tau < WARP_FLY + 50);
+      boost += ((hot ? 18 : 1) - boost) * (1 - Math.exp(-dt * (hot ? 8 : 3)));
+      drawStars(dt);
+      drawWarp(now);
       if (state === 'closed') moveBadges(dt);
     };
     const run = () => {
-      if (reduce || !visible || raf) return;
+      if (reduce || raf || !(visible || warp)) return;
       last = performance.now();
       raf = requestAnimationFrame(frame);
     };
@@ -208,11 +418,11 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
     new IntersectionObserver(([e]) => {
       visible = e.isIntersecting;
       if (visible) run();
-      else halt();
+      else if (!warp) halt();
     }, { rootMargin: '-2px 0px' }).observe(sec);
     const setup = () => {
       sizeStars();
-      drawStars(t);
+      drawStars(0);
       if (!reduce && state === 'closed') initBadges();
     };
     setup();
@@ -246,11 +456,28 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
     const timers: number[] = [];
     const later = (fn: () => void, ms: number) => timers.push(window.setTimeout(fn, ms));
     const delay = (f: Fl) => f.g * STAGGER;
+    // 소개 글을 점 입자로 바꿔 워프를 시작한다. 실패하면(샘플링 오류, 글 픽셀 없음) false → 기존 블록 페이드 경로
+    const startWarp = (dir: 1 | -1) => {
+      let w: ReturnType<typeof sampleText> = null;
+      try {
+        w = sampleText();
+      } catch {
+        w = null;
+      }
+      sec.dataset.warp = String(w ? w.n : 0);
+      if (!w) return false;
+      warp = { ...w, t0: performance.now(), dir };
+      run();
+      return true;
+    };
+    const WARP_LAG = 550; // 워프 후반부터 배지가 앞으로 나와 정렬된다
     const open = () => {
       if (state !== 'closed') return;
       state = 'opening';
       lock();
       openBtn.setAttribute('aria-expanded', 'true');
+      const warped = !reduce && startWarp(1);
+      if (warped) sec.classList.add('is-warp'); // DOM 글은 즉시 투명(제자리), 같은 자리에서 입자가 시작한다
       sec.classList.add('is-open');
       story.inert = true;
       story.setAttribute('aria-hidden', 'true');
@@ -260,13 +487,16 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
         state = 'open';
         return;
       }
-      const base = layer.getBoundingClientRect();
-      for (const f of fls) {
-        const b = (f.li.firstElementChild as HTMLElement).getBoundingClientRect();
-        f.el.style.transition = `transform ${MOVE}ms cubic-bezier(0.65, 0, 0.25, 1) ${delay(f)}ms, opacity ${MOVE}ms ease ${delay(f)}ms`;
-        f.el.style.transform = `translate3d(${b.left - base.left}px, ${b.top - base.top}px, 0)`;
-        f.el.style.opacity = '1';
-      }
+      const lag = warped ? WARP_LAG : 0;
+      later(() => {
+        const base = layer.getBoundingClientRect();
+        for (const f of fls) {
+          const b = (f.li.firstElementChild as HTMLElement).getBoundingClientRect();
+          f.el.style.transition = `transform ${MOVE}ms cubic-bezier(0.65, 0, 0.25, 1) ${delay(f)}ms, opacity ${MOVE}ms ease ${delay(f)}ms`;
+          f.el.style.transform = `translate3d(${b.left - base.left}px, ${b.top - base.top}px, 0)`;
+          f.el.style.opacity = '1';
+        }
+      }, lag);
       later(() => {
         sec.classList.add('is-landed'); // li 보이기, 사본은 사라진다
         for (const f of fls) {
@@ -274,14 +504,15 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
           f.el.style.opacity = '0';
         }
         state = 'open';
-      }, MOVE + 3 * STAGGER);
+      }, lag + MOVE + 3 * STAGGER);
     };
     const close = () => {
       if (state !== 'open') return;
       state = 'closing';
       openBtn.setAttribute('aria-expanded', 'false');
       const done = () => {
-        sec.classList.remove('is-closing');
+        sec.classList.remove('is-closing', 'is-warp', 'is-warp-out');
+        warp = null;
         unlock();
         story.inert = false;
         story.removeAttribute('aria-hidden');
@@ -308,7 +539,6 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
       }
       later(() => {
         sec.classList.remove('is-open');
-        sec.classList.add('is-closing'); // 소개 글이 제자리로 돌아온다(역시차)
         for (const f of fls) {
           f.el.style.transition = `transform ${MOVE}ms cubic-bezier(0.65, 0, 0.25, 1) ${(3 - f.g) * STAGGER}ms, opacity ${MOVE}ms ease ${(3 - f.g) * STAGGER}ms`;
           f.el.style.transform = floatTransform(f); // 열기 직전의 부유 상태(배지 시간은 멈춰 있었다)
@@ -316,8 +546,19 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
         }
         later(() => {
           for (const f of fls) f.el.style.transition = '';
-          done();
-        }, MOVE + 3 * STAGGER + 400); // 소개 글 복귀(최대 지연 550ms + 0.8s)까지 기다린다
+        }, MOVE + 3 * STAGGER);
+        const block = () => {
+          sec.classList.remove('is-warp');
+          sec.classList.add('is-closing'); // 소개 글이 제자리로 돌아온다(역시차)
+          later(done, MOVE + 3 * STAGGER + 400); // 소개 글 복귀(최대 지연 550ms + 0.8s)까지 기다린다
+        };
+        if (!sec.classList.contains('is-warp')) return block();
+        // 워프 역방향: 배지가 돌아가는 동안 입자가 바깥에서 글 자리로 모이고, 끝나면 DOM 글과 교차 페이드
+        later(() => {
+          if (!startWarp(-1)) return block();
+          later(() => sec.classList.replace('is-warp', 'is-warp-out'), WARP_FLY + WARP_SHAKE);
+          later(done, WARP_FLY + WARP_SHAKE + WARP_FADE + 30);
+        }, 200);
       }, FADE);
     };
     openBtn.addEventListener('click', open);
