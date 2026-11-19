@@ -183,6 +183,40 @@ const THEMES: Record<string, Theme> = {
       }
     },
   },
+  // 짙은 남색: 구역으로 나뉜 블록 격자(이어진 한 덩어리만 노랑)와 시간대 막대. 실제 지도 윤곽·글자 없음
+  'nyc-congestion-pricing': {
+    spine: '#13254a',
+    back: '#0f1f3d',
+    ink: '#e8f0ff',
+    band: '#ffcf3a',
+    paint(x, rand) {
+      gradient(x, '#16294f', '#0a1226', W, H);
+      const N = 8, cell = 50, gap = 6, left = 56, top = 64;
+      const used = new Uint8Array(N * N);
+      for (let r = 0; r < N; r++) {
+        for (let c = 0; c < N; c++) {
+          if (used[r * N + c]) continue;
+          // 칸을 가로 2칸 또는 세로 2칸으로 합쳐 크기가 다른 구역을 만든다
+          let w = 1, h = 1;
+          const k = rand();
+          if (k < 0.3 && c + 1 < N && !used[r * N + c + 1]) w = 2;
+          else if (k < 0.55 && r + 1 < N) h = 2;
+          for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) used[(r + i) * N + c + j] = 1;
+          const hot = r >= 3 && r <= 5 && c >= 2 && c <= 4; // 강조 구역: 이어진 한 덩어리
+          x.fillStyle = hot ? '#ffcf3a' : `rgba(130, 160, 220, ${(0.14 + rand() * 0.22).toFixed(2)})`;
+          roundRect(x, left + c * (cell + gap), top + r * (cell + gap), w * cell + (w - 1) * gap, h * cell + (h - 1) * gap, 6);
+        }
+      }
+      // 시간대 막대 24개: 아침·저녁 두 봉우리(길이는 장식)
+      const base = 660, maxH = 150, bw = 11, step = 400 / 24;
+      for (let i = 0; i < 24; i++) {
+        const v = 0.18 + 0.8 * Math.exp(-(((i - 8) / 2) ** 2)) + 0.7 * Math.exp(-(((i - 18) / 2.4) ** 2)) + rand() * 0.06;
+        const bh = Math.min(1, v) * maxH;
+        x.fillStyle = i >= 7 && i <= 9 ? '#ffcf3a' : '#4fd1c5';
+        roundRect(x, left + i * step, base - bh, bw, bh, 4);
+      }
+    },
+  },
 };
 
 // 알 수 없는 slug: coverHue 그라데이션 + 사선 줄무늬
