@@ -47,6 +47,8 @@
 
 /* --- 스냅 스크롤: main[data-snap]이 있는 문서(홈)에만 걸린다 --- */
 html:has(main[data-snap]) { scroll-snap-type: y mandatory; }
+/* S6(화면보다 김)가 현재 섹션(SectionNav의 data-active)이면 proximity: iOS Safari는 화면보다 큰 스냅 영역 안(맨 밑 포함)을 정지 위치로 인정하지 않고 start로 되돌린다 */
+html:has(main[data-snap]):has(#s6[data-active]) { scroll-snap-type: y proximity; }
 @media (prefers-reduced-motion: no-preference) {
   html:has(main[data-snap]) { scroll-behavior: smooth; } /* 인디케이터 클릭 이동 */
 }

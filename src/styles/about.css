@@ -54,7 +54,6 @@ html.skills-lock { overflow: hidden; }
 .s6-badges { position: absolute; inset: 0; }
 .fl { position: absolute; left: 0; top: 0; will-change: transform, opacity; }
 .fl .badge { background: rgba(18, 19, 26, 0.6); }
-@media (max-width: 899px) { .fl:nth-child(n + 25) { display: none; } } /* 모바일: 떠다니는 건 24개까지(스킬 화면에는 전부) */
 @media (prefers-reduced-motion: reduce) { .s6-badges { display: none; } }
 
 /* --- 소개 글 퇴장: 블록마다 시차(--k)를 두고 사용자 쪽으로 다가오며(확대) 흐려져 사라진다 --- */

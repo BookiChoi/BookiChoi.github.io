@@ -367,33 +367,47 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
     };
 
     // --- 떠다니는 배지 사본: 배지마다 독립된 느린 곡선 경로(방향이 천천히 휜다), 깊이에 따라 크기·속도·투명도 ---
-    type Fl = { el: HTMLElement; li: HTMLElement; g: number; w: number; h: number; x: number; y: number; z: number; th: number; o1: number; p1: number; o2: number; p2: number; r: number; s: number; op: number };
+    // idle: 모바일에서 25번째 이후 사본. 평소엔 화면 밖에 투명하게 멈춰 있다가(성능) 스킬 화면을 열고 닫을 때만 날아든다/날아간다
+    type Fl = { el: HTMLElement; li: HTMLElement; g: number; w: number; h: number; x: number; y: number; z: number; th: number; o1: number; p1: number; o2: number; p2: number; r: number; s: number; op: number; idle: boolean };
     const items = new Map([...panel.querySelectorAll<HTMLElement>('li')].map((li) => [li.dataset.i, li]));
     let fls: Fl[] = [];
     const floatTransform = (f: Fl) => `translate3d(${f.x.toFixed(1)}px, ${f.y.toFixed(1)}px, 0) rotate(${f.r.toFixed(2)}deg) scale(${f.s.toFixed(3)})`;
+    const setDepth = (f: Fl, z: number) => {
+      f.z = z;
+      f.s = 0.5 + 0.45 * z;
+      f.op = f.idle ? 0 : 0.1 + 0.18 * z; // 먼 것 0.1, 가까운 것 0.28(0.35는 문단 뒤 로고 칸 색이 읽기를 방해했다)
+      f.el.style.zIndex = String(Math.round(z * 100));
+    };
+    // 레이어 바깥 무작위 가장자리(배지 크기만큼 여유)와 무작위 깊이
+    const toEdge = (f: Fl) => {
+      const BW = layer.clientWidth, BH = layer.clientHeight, mx = f.w + 20, my = f.h + 20, side = Math.floor(Math.random() * 4);
+      f.x = side === 0 ? -mx : side === 1 ? BW + 20 : rnd(-mx, BW + 20);
+      f.y = side === 2 ? -my : side === 3 ? BH + 20 : rnd(-my, BH + 20);
+      setDepth(f, Math.random());
+    };
     const initBadges = () => {
       const BW = layer.clientWidth, BH = layer.clientHeight;
-      fls = [...layer.querySelectorAll<HTMLElement>('.fl')]
-        .filter((el) => el.offsetParent) // 모바일에서 숨긴 사본 제외
-        .map((el) => {
-          const z = Math.random();
-          const f: Fl = {
-            el, li: items.get(el.dataset.i)!, g: Number(el.dataset.g), w: el.offsetWidth, h: el.offsetHeight,
-            x: rnd(-40, BW), y: rnd(-20, BH), z, th: rnd(0, Math.PI * 2),
-            o1: rnd(0.04, 0.12), p1: rnd(0, 6.3), o2: rnd(0.1, 0.25), p2: rnd(0, 6.3),
-            r: 0, s: 0.5 + 0.45 * z, op: 0.1 + 0.18 * z, // 먼 것 0.1, 가까운 것 0.28(0.35는 문단 뒤 로고 칸 색이 읽기를 방해했다)
-          };
-          el.style.zIndex = String(Math.round(z * 100));
-          el.style.opacity = String(f.op);
-          el.style.transform = floatTransform(f);
-          return f;
-        });
+      const few = narrow(); // 모바일: 떠다니는 건 24개까지(스킬 화면에는 전부)
+      fls = [...layer.querySelectorAll<HTMLElement>('.fl')].map((el, k) => {
+        const f: Fl = {
+          el, li: items.get(el.dataset.i)!, g: Number(el.dataset.g), w: el.offsetWidth, h: el.offsetHeight,
+          x: rnd(-40, BW), y: rnd(-20, BH), z: 0, th: rnd(0, Math.PI * 2),
+          o1: rnd(0.04, 0.12), p1: rnd(0, 6.3), o2: rnd(0.1, 0.25), p2: rnd(0, 6.3),
+          r: 0, s: 1, op: 0, idle: few && k >= 24,
+        };
+        if (f.idle) toEdge(f);
+        else setDepth(f, Math.random());
+        el.style.opacity = String(f.op);
+        el.style.transform = floatTransform(f);
+        return f;
+      });
     };
     let bt = 0; // 배지 시간(스킬 화면이 열린 동안은 멈춤)
     const moveBadges = (dt: number) => {
       bt += dt;
       const BW = layer.clientWidth, BH = layer.clientHeight;
       for (const f of fls) {
+        if (f.idle) continue;
         const th = f.th + 0.7 * Math.sin(f.o1 * bt + f.p1);
         const v = 6 + 20 * f.z; // px/s: 먼 것은 느리게
         f.x += Math.cos(th) * v * dt;
@@ -560,6 +574,7 @@ for (let k = 0; floats.length < n; k++) for (const g of groups) if (g.items[k]) 
       later(() => {
         sec.classList.remove('is-open');
         for (const f of fls) {
+          if (f.idle) toEdge(f); // 매번 새 가장자리로 날아가며 사라진다(다음 열기는 거기서 출발)
           f.el.style.transition = `transform ${MOVE}ms cubic-bezier(0.65, 0, 0.25, 1) ${(3 - f.g) * STAGGER}ms, opacity ${MOVE}ms ease ${(3 - f.g) * STAGGER}ms`;
           f.el.style.transform = floatTransform(f); // 열기 직전의 부유 상태(배지 시간은 멈춰 있었다)
           f.el.style.opacity = String(f.op);
