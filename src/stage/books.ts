@@ -12,6 +12,7 @@ import {
   MeshPhysicalMaterial,
   MeshStandardMaterial,
   NeutralToneMapping,
+  PMREMGenerator,
   PerspectiveCamera,
   PlaneGeometry,
   Raycaster,
@@ -23,6 +24,7 @@ import {
   type Material,
   type Texture,
   type ToneMapping,
+  type WebGLRenderTarget,
 } from 'three';
 import { arrange, blurRect, cardCanvas, drawCover, isTodo, LAYOUT, panelCanvas, paperMaps, sheetAtlas, shapeShadow, studioEnv, texture, trace, type BookData, type Placement } from './covers';
 import { DEBUG, debugLine } from './debug';
@@ -30,7 +32,7 @@ import { PARAMS } from './params';
 
 // 프로젝트 섹션(S5)의 3D 파일철 무한 캐러셀(내부 이름은 예전 그대로 books). 파티클과 같은 렌더러에 두 번째 pass로 그린다(index.ts).
 // 실제 프로젝트 파일철(클릭 가능) + 장식용 빈 파일철이 고리처럼 돈다. HTML 링크 목록(#projects)이 접근성과 폴백을 맡는다.
-// 폴더 하나 = Group(크림색 뒤판·앞판 얇은 판 + 아래 접힌 선 + 서류 6장(휨) + 앞 카드 + 접촉 그림자 면 + 보이지 않는 피킹 상자).
+// 폴더 하나 = Group(크림색 뒤판·앞판 얇은 판 + 아래 접힌 선). 실제 폴더만 서류 6장(휨) + 앞 카드 + 접촉 그림자 면 + 보이지 않는 피킹 상자를 더 갖는다.
 // 치수와 배치는 coverArt.ts LAYOUT/arrange. 텍스처는 서류 아틀라스·판·결 맵을 모든 폴더가 함께 쓰고, 카드만 프로젝트마다 다르다.
 export interface Books {
   scene: Scene;
@@ -106,6 +108,30 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   rim.position.set(4, 2, -5);
   scene.add(key, rim);
 
+  // 측정(debug books 줄, ?debug면 window.__booksPerf): 생성 비용(로드 직후)과 첫 렌더 비용(S5 진입)을 나눠 잰다
+  const perf = {
+    gen: { atlas: 0, maps: 0, panels: 0, cards: 0, shadows: 0, env: 0 },
+    geo: { panels: 0, sheets: 0, shadows: 0 },
+    build: 0, // createBooks 동기 구간 전체
+    pmrem: -1,
+    compile: -1,
+    programs: -1, // 첫 렌더 compile로 새로 생긴 프로그램 수
+    programsTotal: -1,
+    upload: -1,
+    render: -1, // 미리 한 일 뒤 남은 첫 렌더(지연된 컴파일 대기 포함)
+    frames: [] as number[], // S5 첫 표시부터 30프레임의 프레임 간격(ms, raw)
+    booksMs: [] as number[], // 같은 프레임들의 책 pass 시간
+    worst: 0,
+    meshes: 0,
+    calls: 0,
+    mb: 0,
+  };
+  const timed = <T,>(bucket: Record<string, number>, key: string, fn: () => T): T => {
+    const t = performance.now();
+    const r = fn();
+    bucket[key] += performance.now() - t;
+    return r;
+  };
   const t0 = performance.now();
   const geometries: BufferGeometry[] = [];
   const disposables: (Material | Texture)[] = [];
@@ -114,6 +140,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     texPixels += canvas.width * canvas.height;
     const t = texture(canvas, o);
     disposables.push(t);
+    textures.push(t);
     return t;
   };
   const geo = <G extends BufferGeometry>(g: G) => (geometries.push(g), g);
@@ -121,34 +148,59 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   const std = (p: ConstructorParameters<typeof MeshStandardMaterial>[0]) => keep(new MeshStandardMaterial(p));
 
   // 환경광(코드로 만든 스튜디오 equirect, three가 PMREM으로 변환)과 톤매핑. 렌더러는 점 구름과 같아서 이 scene을 그리는 동안만 바꾼다
-  const env = studioEnv();
+  const env = timed(perf.gen, 'env', studioEnv);
   disposables.push(env);
   texPixels += 512 * 256 * 2; // equirect + PMREM 대략
   scene.environment = env;
   scene.environmentIntensity = 1;
   let prevTone: ToneMapping = NeutralToneMapping;
   let prevExposure = 1;
-  let firstAt = 0;
-  let upMs = -1; // 첫 렌더(텍스처 업로드 + 셰이더 컴파일) 시간
-  let calls = 0;
+  let beforeAt = 0;
+  let first = true;
+  let pmremRT: WebGLRenderTarget | null = null;
+  const textures: Texture[] = []; // 업로드 측정용(환경 equirect 제외)
   scene.onBeforeRender = (r) => {
     prevTone = r.toneMapping;
     prevExposure = r.toneMappingExposure;
     r.toneMapping = NeutralToneMapping;
     r.toneMappingExposure = EXPOSURE;
-    if (upMs < 0) firstAt = performance.now();
+    if (first) {
+      // 첫 렌더(S5 진입)에 three가 몰아서 하던 일을 같은 프레임 안에서 순서대로 드러내 잰다: PMREM → 컴파일 → 업로드
+      first = false;
+      let t = performance.now();
+      const pm = new PMREMGenerator(r);
+      pmremRT = pm.fromEquirectangular(env);
+      pm.dispose();
+      scene.environment = pmremRT.texture;
+      perf.pmrem = performance.now() - t;
+      const p0 = r.info.programs?.length ?? 0;
+      t = performance.now();
+      r.compile(scene, camera);
+      perf.compile = performance.now() - t;
+      perf.programsTotal = r.info.programs?.length ?? 0;
+      perf.programs = perf.programsTotal - p0;
+      t = performance.now();
+      for (const tx of textures) r.initTexture(tx);
+      perf.upload = performance.now() - t;
+      perf.render = -2; // 이번 렌더의 나머지를 onAfterRender에서 채운다
+    }
+    beforeAt = performance.now();
   };
   scene.onAfterRender = (r) => {
     r.toneMapping = prevTone;
     r.toneMappingExposure = prevExposure;
-    if (upMs < 0) upMs = performance.now() - firstAt;
-    calls = r.info.render.calls;
+    const ms = performance.now() - beforeAt;
+    if (perf.render === -2) perf.render = ms;
+    if (frameLog >= 0 && perf.booksMs.length < 30) perf.booksMs.push(ms);
+    perf.calls = r.info.render.calls;
   };
+  let frameLog = -1; // S5 첫 표시 프레임부터 기록(update 사이 간격)
+  let lastUpdate = 0;
 
   // 공유 텍스처: 서류 아틀라스, 판 2장, 종이 결 법선·거칠기(반복), 그림자
-  const atlas = sheetAtlas();
-  const fiber = paperMaps('fiber');
-  const grain = paperMaps('grain');
+  const atlas = timed(perf.gen, 'atlas', sheetAtlas);
+  const fiber = timed(perf.gen, 'maps', () => paperMaps('fiber'));
+  const grain = timed(perf.gen, 'maps', () => paperMaps('grain'));
   const atlasUnits = atlas.canvas.width / LAYOUT.sheetU; // 아틀라스 UV 1이 몇 단위인지
   const sheetMat = std({
     map: tex(atlas.canvas),
@@ -158,7 +210,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   });
   const grainN = tex(grain.normal, { linear: true, repeat: 4 });
   const grainR = tex(grain.rough, { linear: true, repeat: 4 });
-  const panelMat = (which: 'back' | 'front') => std({ map: tex(panelCanvas(which)), normalMap: grainN, normalScale: new Vector2(0.3, 0.3), roughnessMap: grainR });
+  const panelMat = (which: 'back' | 'front') => std({ map: tex(timed(perf.gen, 'panels', () => panelCanvas(which))), normalMap: grainN, normalScale: new Vector2(0.3, 0.3), roughnessMap: grainR });
   const backMat = panelMat('back');
   const frontMat = panelMat('front');
   const panelEdge = std({ color: '#f1ebe1', roughness: 0.9 });
@@ -166,11 +218,11 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   const sheetEdges = LAYOUT.sheets.map((s) => std({ color: s.edge, roughness: 0.9 }));
   const cardEdge = std({ color: '#f6f3ec', roughness: 0.6 });
   const shade = (map: Texture, opacity: number) => keep(new MeshBasicMaterial({ map, transparent: true, depthWrite: false, opacity }));
-  const rectShadow = tex(blurRect(SHADOW_M, 512));
+  const rectShadow = tex(timed(perf.gen, 'shadows', () => blurRect(SHADOW_M, 512)));
   const sheetShadow = shade(rectShadow, 0.32);
   const cardShadow = shade(rectShadow, 0.5);
   const FM = 0.04; // 앞판 그림자 여백(단위)
-  const frontShadow = shade(tex(shapeShadow(LAYOUT.front, LAYOUT.frontRect, FM, 0.018)), 0.42);
+  const frontShadow = shade(tex(timed(perf.gen, 'shadows', () => shapeShadow(LAYOUT.front, LAYOUT.frontRect, FM, 0.018))), 0.42);
   const proxyMat = keep(new MeshBasicMaterial({ visible: false }));
 
   // 판: 윤곽(탭·계단)을 PANEL 두께로 밀어낸다. UV는 판 사각형 기준(앞뒷면 = 그룹 0, 단면 = 그룹 1)
@@ -183,8 +235,8 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) - r.x0) / (r.x1 - r.x0), (pos.getY(i) - r.y0) / (r.y1 - r.y0));
     return g;
   };
-  const backGeo = panelGeo(LAYOUT.back, LAYOUT.backRect);
-  const frontGeo = panelGeo(LAYOUT.front, LAYOUT.frontRect);
+  const backGeo = timed(perf.geo, 'panels', () => panelGeo(LAYOUT.back, LAYOUT.backRect));
+  const frontGeo = timed(perf.geo, 'panels', () => panelGeo(LAYOUT.front, LAYOUT.frontRect));
   // 아래 접힌 선: 반지름 1의 아래쪽 반원 관(x 방향). 폴더마다 scale로 반지름을 맞춘다
   const foldX0 = LAYOUT.front[LAYOUT.front.length - 1][0];
   const foldGeo = geo(new CylinderGeometry(1, 1, 0.5 - foldX0, 16, 1, true, 0, Math.PI)).rotateZ(-Math.PI / 2);
@@ -274,8 +326,8 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
 
     const k = i - left;
     const book = k >= 0 ? items[k] : undefined;
-    const seed = book ? book.slug : `decor-${i}`;
-    const place = arrange(seed);
+    // 장식 폴더는 빈 폴더(뒤판·앞판·접힌 선만). 서류·카드·그림자 면은 실제 폴더에만
+    const place = book ? arrange(book.slug) : [];
     const rs = Math.abs(Math.sin((i + 1) * 91.7) * 4375.85) % 1;
     const curl = curlOf(rs);
     const g = new Group();
@@ -286,16 +338,19 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     const fold = new Mesh(foldGeo, foldMat);
     fold.position.set((foldX0 + 0.5) / 2, LAYOUT.box.y0, 0);
     fold.scale.set(1, T / 2 + PANEL, T / 2 + PANEL);
-    const fs = new Mesh(frontShadowGeo, frontShadow);
-    fs.position.set((F.x0 + F.x1) / 2, (F.y0 + F.y1) / 2, T / 2 - 0.001);
-    g.add(back, front, fold, fs);
+    g.add(back, front, fold);
+    if (book) {
+      const fs = new Mesh(frontShadowGeo, frontShadow); // 앞판 위 끝이 서류에 드리우는 그림자
+      fs.position.set((F.x0 + F.x1) / 2, (F.y0 + F.y1) / 2, T / 2 - 0.001);
+      g.add(fs);
+    }
     const meshes = place.map((p, j) => {
       const z = -T / 2 + ((j + 1) * T) / (place.length + 1);
       const kj = 1 + 0.1 * ((Math.sin((i + 3) * (j + 1) * 17.3) + 1) / 2 - 0.5); // 장마다 휨 차이(간격의 절반 이하)
-      const m = new Mesh(sheetGeo(j, p, curl, kj), [sheetEdges[j], sheetMat]);
+      const m = new Mesh(timed(perf.geo, 'sheets', () => sheetGeo(j, p, curl, kj)), [sheetEdges[j], sheetMat]);
       m.position.set(p.cx, p.cy, z);
       m.rotation.z = p.angle;
-      const sh = new Mesh(shadowGeo(p, curl, kj), sheetShadow);
+      const sh = new Mesh(timed(perf.geo, 'shadows', () => shadowGeo(p, curl, kj)), sheetShadow);
       sh.position.z = -SHEET / 2 - 0.0012;
       m.add(sh);
       g.add(m);
@@ -306,7 +361,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     let card: Mesh | null = null;
     cardZ[i] = T / 2 + PANEL + 0.0015 + CARD / 2;
     if (book) {
-      card = new Mesh(cardGeo, [cardEdge, keep(new MeshPhysicalMaterial({ map: tex(cardCanvas(book)), roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.4 }))]);
+      card = new Mesh(cardGeo, [cardEdge, keep(new MeshPhysicalMaterial({ map: tex(timed(perf.gen, 'cards', () => cardCanvas(book))), roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.4 }))]);
       card.position.set(K.cx, K.cy, cardZ[i]);
       card.rotation.z = K.angle;
       const cs = new Mesh(cardShadowGeo, cardShadow);
@@ -332,8 +387,12 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     groups.push(g);
     scene.add(g);
   }
-  const texMs = performance.now() - t0;
-  const texMB = (texPixels * 4 * 4) / 3 / 1048576; // RGBA × mipmap(4/3)
+  perf.build = performance.now() - t0;
+  perf.mb = (texPixels * 4 * 4) / 3 / 1048576; // RGBA × mipmap(4/3)
+  scene.traverse((o) => {
+    if (o instanceof Mesh && o.material !== proxyMat) perf.meshes++;
+  });
+  if (DEBUG) Object.assign(window, { __booksPerf: perf });
 
   // 캐러셀 오프셋: x_i = wrap(i × spacing − 가운데 + offset)
   let offset = phase;
@@ -694,6 +753,12 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     },
     update(dt, sec) {
       const now = performance.now();
+      // 첫 30프레임: update 사이 간격(index.ts의 dt는 1/30초로 잘려 있어 따로 잰다)
+      if (frameLog >= 0 && perf.frames.length < 30) {
+        perf.frames.push(now - lastUpdate);
+        perf.worst = Math.max(perf.worst, now - lastUpdate);
+      }
+      lastUpdate = now;
       const p = clamp01((sec - P.appear[0]) / (P.appear[1] - P.appear[0]));
       const wasActive = active;
       active = p > 0.85;
@@ -788,7 +853,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         g.rotation.set(TILT * cur[o + PEEK], cur[o + YAW], 0, 'YXZ'); // 돌린 뒤 제자리에서 앞으로 기운다
         g.scale.set(s, s * height[i], s);
         const peek = cur[o + PEEK];
-        for (let j = 0; j < LAYOUT.sheets.length; j++) {
+        for (let j = 0; j < sheetMeshes[i].length; j++) {
           const [dx, dy] = LAYOUT.sheets[j].peek; // 위·왼쪽으로만(뒤쪽일수록 많이)
           const b = sheetBase[i][j];
           sheetMeshes[i][j].position.x = b.cx + dx * peek;
@@ -828,8 +893,9 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
           v.set(baseX[i] + cur[o + SHIFT], cur[o + Y] + P.size[1] * height[i] * 0.5 * cur[o + SCALE], cur[o + Z]).project(camera);
           top = Math.min(top, (0.5 - v.y * 0.5) * innerHeight);
         }
-        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${Math.round(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}  tex ${Math.round(texMs)}ms up ${Math.round(upMs)}ms ~${Math.round(texMB)}MB calls ${calls} out ${out}`);
+        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${Math.round(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}  | gen ${Math.round(perf.build)}ms  first pmrem ${Math.round(perf.pmrem)} compile ${Math.round(perf.compile)} (prog ${perf.programs}) up ${Math.round(perf.upload)} render ${Math.round(perf.render)}ms  f30 max ${Math.round(perf.worst)}ms  meshes ${perf.meshes} calls ${perf.calls} ~${Math.round(perf.mb)}MB out ${out}`);
       }
+      if (visible && frameLog < 0) frameLog = 0;
       return visible;
     },
     dispose() {
@@ -838,6 +904,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       if (tip) tip.hidden = true;
       for (const g of geometries) g.dispose();
       for (const d of disposables) d.dispose();
+      pmremRT?.dispose();
     },
   };
 }

@@ -283,6 +283,20 @@ export function panelCanvas(which: 'back' | 'front', scale = 1): HTMLCanvasEleme
   x.fillStyle = g;
   x.fillRect(0, 0, canvas.width, canvas.height);
   texture(x, canvas.width, canvas.height, u, rng(`panel:${which}`), 'grain');
+  if (which === 'back') {
+    // 앞판 아래(폴더 안쪽)로 옅은 내부 그림자: 빈 폴더를 비스듬히 볼 때 앞판 가장자리 틈으로 보이는 안쪽이 어두워진다.
+    // 실제 폴더에서는 이 자리가 서류에 가려진다. 윤곽은 멀리 옮겨 그리고 그림자만 남긴다
+    unitSpace(x, r, u);
+    x.translate(10, 0);
+    x.shadowColor = 'rgba(40,28,10,0.38)';
+    x.shadowBlur = 0.03 * u;
+    x.shadowOffsetX = -10 * u;
+    x.shadowOffsetY = 0.012 * u; // 아래쪽으로 조금
+    x.fillStyle = '#000';
+    x.fill(pathOf(LAYOUT.front));
+    x.shadowColor = 'transparent';
+    x.setTransform(1, 0, 0, 1, 0, 0);
+  }
   // 아래 접힌 선의 얇은 하이라이트
   const fold = x.createLinearGradient(0, canvas.height - 0.03 * u, 0, canvas.height);
   fold.addColorStop(0, 'rgba(255,255,255,0)');
