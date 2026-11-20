@@ -1,29 +1,37 @@
 import {
   AmbientLight,
+  Box3,
   BoxGeometry,
-  BufferGeometry,
+  CylinderGeometry,
   DirectionalLight,
-  EdgesGeometry,
-  Float32BufferAttribute,
-  LineBasicMaterial,
-  LineSegments,
+  DoubleSide,
+  ExtrudeGeometry,
+  Group,
   Mesh,
+  MeshBasicMaterial,
+  MeshPhysicalMaterial,
   MeshStandardMaterial,
+  NeutralToneMapping,
   PerspectiveCamera,
+  PlaneGeometry,
   Raycaster,
   Scene,
+  Shape,
   Vector2,
   Vector3,
+  type BufferGeometry,
   type Material,
   type Texture,
+  type ToneMapping,
 } from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { isTodo, makeCover, makeSpine, shortName, themeOf, type BookData } from './covers';
+import { arrange, blurRect, cardCanvas, drawCover, isTodo, LAYOUT, panelCanvas, paperMaps, sheetAtlas, shapeShadow, studioEnv, texture, trace, type BookData, type Placement } from './covers';
 import { DEBUG, debugLine } from './debug';
 import { PARAMS } from './params';
 
-// 프로젝트 섹션(S5)의 3D 책 무한 캐러셀. 파티클과 같은 렌더러에 두 번째 pass로 그린다(index.ts).
-// 실제 프로젝트 책(클릭 가능) + 장식용 빈 책이 고리처럼 돈다. HTML 링크 목록(#projects)이 접근성과 폴백을 맡는다.
+// 프로젝트 섹션(S5)의 3D 파일철 무한 캐러셀(내부 이름은 예전 그대로 books). 파티클과 같은 렌더러에 두 번째 pass로 그린다(index.ts).
+// 실제 프로젝트 파일철(클릭 가능) + 장식용 빈 파일철이 고리처럼 돈다. HTML 링크 목록(#projects)이 접근성과 폴백을 맡는다.
+// 폴더 하나 = Group(크림색 뒤판·앞판 얇은 판 + 아래 접힌 선 + 서류 6장(휨) + 앞 카드 + 접촉 그림자 면 + 보이지 않는 피킹 상자).
+// 치수와 배치는 coverArt.ts LAYOUT/arrange. 텍스처는 서류 아틀라스·판·결 맵을 모든 폴더가 함께 쓰고, 카드만 프로젝트마다 다르다.
 export interface Books {
   scene: Scene;
   camera: PerspectiveCamera;
@@ -41,7 +49,14 @@ const Y = 1;
 const Z = 2;
 const YAW = 3;
 const SCALE = 4;
-const CH = 5;
+const PEEK = 5; // 호버: 종이가 솟고 위쪽이 살짝 기운다(0..1)
+const CH = 6;
+const TILT = -0.05; // 호버 때 위쪽이 카메라 쪽으로 기우는 각도(rad)
+const PANEL = 0.006; // 앞판·뒤판 두께
+const SHEET = 0.003; // 서류 두께
+const CARD = 0.005; // 카드 두께
+const SHADOW_M = 0.04; // 그림자 텍스처 가장자리 흐림 비율
+const EXPOSURE = 1.15; // 책 pass 톤매핑 노출
 const DRAG_PX = 6; // 이만큼 넘게 움직이면 드래그(클릭 전환 안 함)
 // 모바일 탭: click에 기대지 않고 pointerup으로 판정한다(iOS는 클릭 불가 요소의 탭에 click을 안 보낼 수 있다)
 const TAP_PX = 16; // 터치 이동 허용치(CSS px, 가로·세로 합친 거리). 이 이하면 탭, 넘으면 캐러셀 드래그
@@ -64,13 +79,6 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   }
   if (!items.length) return null;
 
-  // 책등 글자는 display/mono 폰트가 로드된 뒤에 그린다
-  const css = getComputedStyle(document.documentElement);
-  const fonts = { display: css.getPropertyValue('--font-display').trim(), mono: css.getPropertyValue('--font-mono').trim() };
-  const sample = items.map((b) => shortName(b.title)).join(' ');
-  await Promise.all([document.fonts.load(`500 46px ${fonts.display}`, sample), document.fonts.load(`400 26px ${fonts.mono}`, '0123456789')]).catch(() => {});
-  if (opts.signal.aborted) return null;
-
   // 고리 순서: 장식 책 절반 → 실제 책(order 순) → 나머지 장식 책. 모바일은 루프가 보이도록 장식 책을 최대 4권
   const blanks = opts.mobile ? Math.min(P.blankMobile, PARAMS.blankBooks) : PARAMS.blankBooks;
   const left = Math.floor(blanks / 2);
@@ -91,78 +99,241 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
 
   const scene = new Scene();
   const camera = new PerspectiveCamera(P.fov, 1, 0.1, 100);
-  scene.add(new AmbientLight(0xffffff, 0.55));
-  const key = new DirectionalLight(0xffffff, 2.4);
+  scene.add(new AmbientLight(0xffffff, 0.3));
+  const key = new DirectionalLight(0xfff8ee, 2.2);
   key.position.set(-3, 4, 6);
-  const rim = new DirectionalLight(opts.accent, 2);
+  const rim = new DirectionalLight(opts.accent, 0.8);
   rim.position.set(4, 2, -5);
   scene.add(key, rim);
 
-  // 모서리를 약간 둥글게. 면 그룹 6개(머티리얼 배열 순서)와 앞표지/책등 UV 방향은 BoxGeometry와 같다
-  const geometry = new RoundedBoxGeometry(P.size[0], P.size[1], P.size[2], 2, P.radius);
+  const t0 = performance.now();
+  const geometries: BufferGeometry[] = [];
   const disposables: (Material | Texture)[] = [];
-  const mat = (color: string, map?: Texture) => {
-    const m = new MeshStandardMaterial({ color, roughness: 0.78 });
-    if (map) m.map = map;
-    disposables.push(m);
-    if (map) disposables.push(map);
-    return m;
+  let texPixels = 0; // 텍스처 메모리 추정(debug)
+  const tex = (canvas: HTMLCanvasElement, o?: Parameters<typeof texture>[1]) => {
+    texPixels += canvas.width * canvas.height;
+    const t = texture(canvas, o);
+    disposables.push(t);
+    return t;
   };
-  const paper = mat('#d8d0bf'); // 책배와 위아래 면: 밝은 종이색(너무 하얗게 빛나지 않게 약간 낮춘 톤)
-  // 장식 책: 텍스처 없는 반투명 면 + 윤곽선(일반 상자의 12변 + 앞표지 책등 쪽 경첩선 1개). 뒤의 점 구름이 비친다
-  const G = PARAMS.ghost;
-  const ghost = new MeshStandardMaterial({ color: G.color, roughness: 0.5, transparent: true, opacity: G.opacity, depthWrite: false });
-  const lineMat = new LineBasicMaterial({ color: G.color, transparent: true, opacity: G.line, depthWrite: false });
-  const box = new BoxGeometry(P.size[0], P.size[1], P.size[2]);
-  const boxEdges = new EdgesGeometry(box); // 둥근 상자는 베벨마다 선이 생겨 일반 상자로 만든다
-  const [hw, hh, hd] = [P.size[0] / 2, P.size[1] / 2, P.size[2] / 2];
-  const edges = new BufferGeometry();
-  edges.setAttribute('position', new Float32BufferAttribute([...boxEdges.getAttribute('position').array, -hw + G.hinge, -hh, hd, -hw + G.hinge, hh, hd], 3));
-  box.dispose();
-  boxEdges.dispose();
-  disposables.push(ghost, lineMat);
+  const geo = <G extends BufferGeometry>(g: G) => (geometries.push(g), g);
+  const keep = <M extends Material>(m: M) => (disposables.push(m), m);
+  const std = (p: ConstructorParameters<typeof MeshStandardMaterial>[0]) => keep(new MeshStandardMaterial(p));
 
-  const meshes: Mesh[] = [];
-  const real: Mesh[] = []; // 레이캐스트 대상(실제 책만)
-  const coverArt: HTMLCanvasElement[] = []; // real[k]의 앞표지 그림(상세 전환 오버레이에 복사)
-  const realIndex: number[] = []; // real[k]의 고리 안 위치
-  for (let i = 0; i < n; i++) {
-    const k = i - left;
-    const book = items[k];
-    let mesh: Mesh;
-    if (k >= 0 && book) {
-      // 면 순서: +x(책배) −x(책등) +y −y +z(앞표지) −z(뒷표지)
-      const cover = makeCover(book, fonts);
-      coverArt.push(cover.image as HTMLCanvasElement);
-      mesh = new Mesh(geometry, [paper, mat('#ffffff', makeSpine(book, fonts)), paper, paper, mat('#ffffff', cover), mat(themeOf(book).back)]);
-      real.push(mesh);
-      realIndex.push(i);
-    } else {
-      mesh = new Mesh(geometry, ghost);
-      const outline = new LineSegments(edges, lineMat);
-      mesh.renderOrder = 1; // 투명 면 → 선 순서로 고정(깜빡임 방지)
-      outline.renderOrder = 2;
-      mesh.add(outline);
+  // 환경광(코드로 만든 스튜디오 equirect, three가 PMREM으로 변환)과 톤매핑. 렌더러는 점 구름과 같아서 이 scene을 그리는 동안만 바꾼다
+  const env = studioEnv();
+  disposables.push(env);
+  texPixels += 512 * 256 * 2; // equirect + PMREM 대략
+  scene.environment = env;
+  scene.environmentIntensity = 1;
+  let prevTone: ToneMapping = NeutralToneMapping;
+  let prevExposure = 1;
+  let firstAt = 0;
+  let upMs = -1; // 첫 렌더(텍스처 업로드 + 셰이더 컴파일) 시간
+  let calls = 0;
+  scene.onBeforeRender = (r) => {
+    prevTone = r.toneMapping;
+    prevExposure = r.toneMappingExposure;
+    r.toneMapping = NeutralToneMapping;
+    r.toneMappingExposure = EXPOSURE;
+    if (upMs < 0) firstAt = performance.now();
+  };
+  scene.onAfterRender = (r) => {
+    r.toneMapping = prevTone;
+    r.toneMappingExposure = prevExposure;
+    if (upMs < 0) upMs = performance.now() - firstAt;
+    calls = r.info.render.calls;
+  };
+
+  // 공유 텍스처: 서류 아틀라스, 판 2장, 종이 결 법선·거칠기(반복), 그림자
+  const atlas = sheetAtlas();
+  const fiber = paperMaps('fiber');
+  const grain = paperMaps('grain');
+  const atlasUnits = atlas.canvas.width / LAYOUT.sheetU; // 아틀라스 UV 1이 몇 단위인지
+  const sheetMat = std({
+    map: tex(atlas.canvas),
+    normalMap: tex(fiber.normal, { linear: true, repeat: Math.round(atlasUnits / 0.22) }),
+    normalScale: new Vector2(0.35, 0.35),
+    roughnessMap: tex(fiber.rough, { linear: true, repeat: Math.round(atlasUnits / 0.22) }),
+  });
+  const grainN = tex(grain.normal, { linear: true, repeat: 4 });
+  const grainR = tex(grain.rough, { linear: true, repeat: 4 });
+  const panelMat = (which: 'back' | 'front') => std({ map: tex(panelCanvas(which)), normalMap: grainN, normalScale: new Vector2(0.3, 0.3), roughnessMap: grainR });
+  const backMat = panelMat('back');
+  const frontMat = panelMat('front');
+  const panelEdge = std({ color: '#f1ebe1', roughness: 0.9 });
+  const foldMat = std({ color: '#ddd4c5', roughness: 0.85, side: DoubleSide });
+  const sheetEdges = LAYOUT.sheets.map((s) => std({ color: s.edge, roughness: 0.9 }));
+  const cardEdge = std({ color: '#f6f3ec', roughness: 0.6 });
+  const shade = (map: Texture, opacity: number) => keep(new MeshBasicMaterial({ map, transparent: true, depthWrite: false, opacity }));
+  const rectShadow = tex(blurRect(SHADOW_M, 512));
+  const sheetShadow = shade(rectShadow, 0.32);
+  const cardShadow = shade(rectShadow, 0.5);
+  const FM = 0.04; // 앞판 그림자 여백(단위)
+  const frontShadow = shade(tex(shapeShadow(LAYOUT.front, LAYOUT.frontRect, FM, 0.018)), 0.42);
+  const proxyMat = keep(new MeshBasicMaterial({ visible: false }));
+
+  // 판: 윤곽(탭·계단)을 PANEL 두께로 밀어낸다. UV는 판 사각형 기준(앞뒷면 = 그룹 0, 단면 = 그룹 1)
+  const panelGeo = (pts: typeof LAYOUT.back, r: typeof LAYOUT.backRect) => {
+    const shape = new Shape();
+    trace(shape, pts);
+    const g = geo(new ExtrudeGeometry(shape, { depth: PANEL, bevelEnabled: false, curveSegments: 3 }));
+    const pos = g.attributes.position;
+    const uv = g.attributes.uv;
+    for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) - r.x0) / (r.x1 - r.x0), (pos.getY(i) - r.y0) / (r.y1 - r.y0));
+    return g;
+  };
+  const backGeo = panelGeo(LAYOUT.back, LAYOUT.backRect);
+  const frontGeo = panelGeo(LAYOUT.front, LAYOUT.frontRect);
+  // 아래 접힌 선: 반지름 1의 아래쪽 반원 관(x 방향). 폴더마다 scale로 반지름을 맞춘다
+  const foldX0 = LAYOUT.front[LAYOUT.front.length - 1][0];
+  const foldGeo = geo(new CylinderGeometry(1, 1, 0.5 - foldX0, 16, 1, true, 0, Math.PI)).rotateZ(-Math.PI / 2);
+  const F = LAYOUT.frontRect;
+  const frontShadowGeo = geo(new PlaneGeometry(F.x1 - F.x0 + 2 * FM, F.y1 - F.y0 + 2 * FM));
+  const K = LAYOUT.card;
+  const cardGeo = geo(new BoxGeometry(K.w, K.h, CARD));
+  cardGeo.groups = [
+    { start: 0, count: 24, materialIndex: 0 }, // 옆 4면 → 단면
+    { start: 24, count: 12, materialIndex: 1 }, // 앞뒤 → 그림
+  ];
+  const cardShadowGeo = geo(new PlaneGeometry(K.w / (1 - 2 * SHADOW_M), K.h / (1 - 2 * SHADOW_M)));
+  const proxyGeo = geo(new BoxGeometry(P.size[0], P.size[1], 1)); // 피킹·화면 사각형용(깊이는 폴더마다 scale.z)
+
+  /** 앞판 밖으로 드러난 부분(위·왼쪽)만 앞으로 살짝 휜다. 폴더마다 seed 하나를 6장이 함께 써서 서류끼리 뚫지 않는다 */
+  const smooth = (a: number, b: number, v: number) => {
+    const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  const curlOf = (seed: number) => {
+    const top = 0.008 + seed * 0.008;
+    const side = 0.007 + ((seed * 7.3) % 1) * 0.008;
+    const corner = ((seed * 3.1) % 1) * 0.006;
+    const phase = seed * 6.28;
+    return (X: number, Y: number) => {
+      const f = Math.max(0, Y - LAYOUT.frontRect.y1) / 0.2;
+      const edgeX = -0.37 + 0.07 * smooth(-0.25, -0.15, Y); // 앞판 왼쪽 끝(계단 아래는 더 바깥)보다 바깥만
+      const g = Math.max(0, edgeX - X) / 0.15;
+      return top * f * f * (1 + 0.3 * Math.sin(X * 7 + phase)) + side * g * g + corner * f * g;
+    };
+  };
+  /** 배치(회전·가운데) 기준 지역 좌표의 정점을 휜다 */
+  const bend = (g: BufferGeometry, p: Placement, curl: (X: number, Y: number) => number, k: number) => {
+    const pos = g.attributes.position;
+    const c = Math.cos(p.angle);
+    const s = Math.sin(p.angle);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      pos.setZ(i, pos.getZ(i) + k * curl(p.cx + x * c - y * s, p.cy + x * s + y * c));
     }
-    meshes.push(mesh);
-    scene.add(mesh);
-  }
+    g.computeVertexNormals();
+    return g;
+  };
+  const sheetGeo = (j: number, p: Placement, curl: (X: number, Y: number) => number, k: number) => {
+    const g = geo(new BoxGeometry(p.w, p.h, SHEET, 16, 24, 1));
+    // 면 그룹 6개 → 2개: 옆 4면은 단면색, 앞뒤는 아틀라스(뒷면은 보이지 않는다)
+    const [a, b, c2, d, front, back] = g.groups;
+    g.groups = [
+      { start: a.start, count: a.count + b.count + c2.count + d.count, materialIndex: 0 },
+      { start: front.start, count: front.count + back.count, materialIndex: 1 },
+    ];
+    const cell = atlas.cells[j];
+    const pos = g.attributes.position;
+    const uv = g.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+      uv.setXY(i, cell.x0 + (pos.getX(i) / p.w + 0.5) * (cell.x1 - cell.x0), cell.y0 + (pos.getY(i) / p.h + 0.5) * (cell.y1 - cell.y0));
+    }
+    return bend(g, p, curl, k);
+  };
+  const shadowGeo = (p: Placement, curl: (X: number, Y: number) => number, k: number) =>
+    bend(geo(new PlaneGeometry(p.w / (1 - 2 * SHADOW_M), p.h / (1 - 2 * SHADOW_M), 8, 12)), p, curl, k);
 
-  // 스프링 상태(책 n개 × CH개 값)와 책별 고정 값. 모두 미리 만든 타입 배열이라 프레임당 할당이 없다
+  // 스프링 상태(폴더 n개 × CH개 값)와 폴더별 고정 값. 모두 미리 만든 타입 배열이라 프레임당 할당이 없다
   const cur = new Float32Array(n * CH);
   const vel = new Float32Array(n * CH);
-  const height = new Float32Array(n); // 책마다 높이(±8%)와 두께가 조금씩 다르다
-  const thick = new Float32Array(n);
+  const height = new Float32Array(n); // 폴더마다 높이(±3%)와 두께가 조금씩 다르다
   const baseX = new Float32Array(n); // 이번 프레임의 캐러셀 위치(스프링을 거치지 않는다)
+
+  const groups: Group[] = [];
+  const sheetMeshes: Mesh[][] = []; // 폴더마다 서류 6장(호버 때 위·왼쪽으로 솟는다)
+  const sheetBase: Placement[][] = [];
+  const cards: (Mesh | null)[] = [];
+  const cardZ = new Float32Array(n);
+  const real: Mesh[] = []; // 레이캐스트 대상(실제 폴더의 보이지 않는 피킹 상자)
+  const realIndex: number[] = []; // real[k]의 고리 안 위치
+  const box = new Box3();
+  let out = 0; // 폴더 아래·왼쪽 밖으로 나간 서류 수(debug, 0이어야 한다)
   for (let i = 0; i < n; i++) {
     const a = Math.abs(Math.sin(i * 12.9898 + 1.3) * 43758.5453) % 1;
     const b = Math.abs(Math.sin(i * 78.233 + 4.1) * 12543.917) % 1;
     height[i] = 1 + (a - 0.5) * 2 * P.heightJitter;
-    thick[i] = (P.thickness[0] + b * (P.thickness[1] - P.thickness[0])) / P.size[2];
+    const T = P.thickness[0] + b * (P.thickness[1] - P.thickness[0]); // 앞판~뒤판 간격
     cur[i * CH + Y] = P.y - P.rise;
     cur[i * CH + YAW] = restYaw;
     cur[i * CH + SCALE] = 1;
+
+    const k = i - left;
+    const book = k >= 0 ? items[k] : undefined;
+    const seed = book ? book.slug : `decor-${i}`;
+    const place = arrange(seed);
+    const rs = Math.abs(Math.sin((i + 1) * 91.7) * 4375.85) % 1;
+    const curl = curlOf(rs);
+    const g = new Group();
+    const back = new Mesh(backGeo, [backMat, panelEdge]);
+    back.position.z = -T / 2 - PANEL;
+    const front = new Mesh(frontGeo, [frontMat, panelEdge]);
+    front.position.z = T / 2;
+    const fold = new Mesh(foldGeo, foldMat);
+    fold.position.set((foldX0 + 0.5) / 2, LAYOUT.box.y0, 0);
+    fold.scale.set(1, T / 2 + PANEL, T / 2 + PANEL);
+    const fs = new Mesh(frontShadowGeo, frontShadow);
+    fs.position.set((F.x0 + F.x1) / 2, (F.y0 + F.y1) / 2, T / 2 - 0.001);
+    g.add(back, front, fold, fs);
+    const meshes = place.map((p, j) => {
+      const z = -T / 2 + ((j + 1) * T) / (place.length + 1);
+      const kj = 1 + 0.1 * ((Math.sin((i + 3) * (j + 1) * 17.3) + 1) / 2 - 0.5); // 장마다 휨 차이(간격의 절반 이하)
+      const m = new Mesh(sheetGeo(j, p, curl, kj), [sheetEdges[j], sheetMat]);
+      m.position.set(p.cx, p.cy, z);
+      m.rotation.z = p.angle;
+      const sh = new Mesh(shadowGeo(p, curl, kj), sheetShadow);
+      sh.position.z = -SHEET / 2 - 0.0012;
+      m.add(sh);
+      g.add(m);
+      return m;
+    });
+    sheetMeshes.push(meshes);
+    sheetBase.push(place);
+    let card: Mesh | null = null;
+    cardZ[i] = T / 2 + PANEL + 0.0015 + CARD / 2;
+    if (book) {
+      card = new Mesh(cardGeo, [cardEdge, keep(new MeshPhysicalMaterial({ map: tex(cardCanvas(book)), roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.4 }))]);
+      card.position.set(K.cx, K.cy, cardZ[i]);
+      card.rotation.z = K.angle;
+      const cs = new Mesh(cardShadowGeo, cardShadow);
+      cs.position.set(K.cx + 0.004, K.cy - 0.008, T / 2 + PANEL + 0.0006);
+      cs.rotation.z = K.angle;
+      g.add(card, cs);
+      // 뒤판 바깥부터 카드 앞까지 감싸는 보이지 않는 상자(실루엣 1 × 1.3)
+      const proxy = new Mesh(proxyGeo, proxyMat);
+      proxy.scale.z = T + 2 * PANEL + 0.004 + CARD;
+      proxy.position.z = (0.004 + CARD) / 2;
+      g.add(proxy);
+      real.push(proxy);
+      realIndex.push(i);
+    }
+    cards.push(card);
+    // 서류 아래 끝 검사(휨 포함, 그룹 좌표계 = 아직 변환 전)
+    g.updateMatrixWorld(true);
+    for (const m of meshes) {
+      m.geometry.computeBoundingBox();
+      if (m.geometry.boundingBox) box.copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld); // 자식(그림자 면)은 빼고 서류만
+      if (box.min.y < LAYOUT.box.y0 || box.min.x < LAYOUT.box.x0) out++;
+    }
+    groups.push(g);
+    scene.add(g);
   }
+  const texMs = performance.now() - t0;
+  const texMB = (texPixels * 4 * 4) / 3 / 1048576; // RGBA × mipmap(4/3)
 
   // 캐러셀 오프셋: x_i = wrap(i × spacing − 가운데 + offset)
   let offset = phase;
@@ -210,17 +381,18 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     return hit ? real.indexOf(hit.object as Mesh) : -1;
   };
 
-  /** 실제 책 k의 화면 사각형(CSS px, 박스 8모서리 투영). 숨어 있으면 null */
+  /** 실제 파일철 k의 화면 사각형(CSS px, 피킹 상자 8모서리 투영). 숨어 있으면 null */
   const rect = new Float32Array(4);
   const screenRect = (k: number): Float32Array | null => {
-    const mesh = real[k];
-    if (!mesh || !mesh.visible) return null;
-    mesh.updateMatrixWorld();
+    const proxy = real[k];
+    const g = proxy?.parent;
+    if (!proxy || !g || !g.visible) return null;
+    g.updateMatrixWorld();
     rect[0] = rect[1] = Infinity;
     rect[2] = rect[3] = -Infinity;
     for (let c = 0; c < 8; c++) {
-      v.set(((c & 1 ? 1 : -1) * P.size[0]) / 2, ((c & 2 ? 1 : -1) * P.size[1]) / 2, ((c & 4 ? 1 : -1) * P.size[2]) / 2)
-        .applyMatrix4(mesh.matrixWorld)
+      v.set(((c & 1 ? 1 : -1) * P.size[0]) / 2, ((c & 2 ? 1 : -1) * P.size[1]) / 2, (c & 4 ? 1 : -1) * 0.5)
+        .applyMatrix4(proxy.matrixWorld)
         .project(camera);
       const px = (v.x * 0.5 + 0.5) * innerWidth;
       const py = (0.5 - v.y * 0.5) * innerHeight;
@@ -305,16 +477,16 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     overlay?.remove();
     overlay = null;
   };
-  const showOverlay = (k: number) => {
+  /** art: 클릭 순간에 그린 2D 합성(drawCover, 상세 표지와 같은 그림·같은 2:3 틀) */
+  const showOverlay = (k: number, art: HTMLCanvasElement | null) => {
     removeOverlay();
-    const art = coverArt[k];
-    const mesh = real[k];
-    if (!canMorph || !art || !mesh) return;
-    mesh.updateMatrixWorld();
+    const proxy = real[k];
+    if (!canMorph || !art || !proxy) return;
+    proxy.parent?.updateMatrixWorld();
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      // 앞표지(+z 면)의 네 모서리를 화면 좌표로
-      v.set((sx * P.size[0]) / 2, (sy * P.size[1]) / 2, P.size[2] / 2).applyMatrix4(mesh.matrixWorld).project(camera);
+      // 상세 표지와 같은 1 × 1.5 틀(폴더 실루엣 1 × 1.3이 가운데)을 피킹 상자 앞면(카드 앞) 깊이에서 화면 좌표로
+      v.set((sx * LAYOUT.frame.w) / 2, (sy * LAYOUT.frame.h) / 2, 0.5).applyMatrix4(proxy.matrixWorld).project(camera);
       const px = (v.x * 0.5 + 0.5) * innerWidth;
       const py = (0.5 - v.y * 0.5) * innerHeight;
       x0 = Math.min(x0, px);
@@ -390,8 +562,14 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       picked = k;
       hover = -1;
       showTip(-1);
+      let art: HTMLCanvasElement | null = null;
+      try {
+        if (canMorph) art = drawCover(book); // 전환 대기(pickMs) 동안 미리 그린다
+      } catch {
+        art = null;
+      }
       window.setTimeout(() => {
-        showOverlay(k);
+        showOverlay(k, art);
         location.href = book.href;
       }, P.pickMs);
     },
@@ -580,6 +758,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         let tz = zCenter * mid;
         let tyaw = restYaw * (1 - P.centerTurn * mid) - wave * P.waveYaw;
         let ts = 1;
+        let tpeek = 0;
         if (pickedRow >= 0) {
           if (i === pickedRow) {
             tshift = -sx; // 선택한 책만 화면 중앙으로
@@ -592,23 +771,32 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
           ty += P.hoverLift;
           tz = zHover;
           tyaw = P.hoverYaw;
+          tpeek = 1; // 종이가 조금 솟고 위쪽이 살짝 기운다
         }
-        // 스프링 적분 (값 5개)
+        // 스프링 적분 (값 CH개)
         for (let c = 0; c < CH; c++) {
-          const target = c === SHIFT ? tshift : c === Y ? ty : c === Z ? tz : c === YAW ? tyaw : ts;
+          const target = c === SHIFT ? tshift : c === Y ? ty : c === Z ? tz : c === YAW ? tyaw : c === PEEK ? tpeek : ts;
           vel[o + c] += ((target - cur[o + c]) * P.spring - vel[o + c] * P.damping) * dt;
           cur[o + c] += vel[o + c] * dt;
         }
         // 고리 끝: 스프링 밖에서 곱한다. 래핑은 항상 크기 0인 순간에 일어나서 튀지 않는다
         const edge = i === pickedRow ? 1 : ease(clamp01((fadeEnd - Math.abs(bx)) / fadeLen));
         const s = cur[o + SCALE] * edge;
-        const mesh = meshes[i];
-        mesh.visible = s > 0.001;
-        mesh.position.set(sx + cur[o + SHIFT], cur[o + Y] - (1 - edge) * P.edgeSink, cur[o + Z]);
-        mesh.rotation.y = cur[o + YAW];
-        mesh.scale.set(s, s * height[i], s * thick[i]);
-        // 책마다 자기 숨은 높이 기준(키 큰 책은 숨은 자리가 기준보다 높아 p = 0에서도 pass 2가 켜지던 문제)
-        if (mesh.visible && cur[o + Y] > hiddenY + 0.05) visible = true;
+        const g = groups[i];
+        g.visible = s > 0.001;
+        g.position.set(sx + cur[o + SHIFT], cur[o + Y] - (1 - edge) * P.edgeSink, cur[o + Z]);
+        g.rotation.set(TILT * cur[o + PEEK], cur[o + YAW], 0, 'YXZ'); // 돌린 뒤 제자리에서 앞으로 기운다
+        g.scale.set(s, s * height[i], s);
+        const peek = cur[o + PEEK];
+        for (let j = 0; j < LAYOUT.sheets.length; j++) {
+          const [dx, dy] = LAYOUT.sheets[j].peek; // 위·왼쪽으로만(뒤쪽일수록 많이)
+          const b = sheetBase[i][j];
+          sheetMeshes[i][j].position.x = b.cx + dx * peek;
+          sheetMeshes[i][j].position.y = b.cy + dy * peek;
+        }
+        cards[i]?.position.setZ(cardZ[i] + 0.01 * peek);
+        // 파일철마다 자기 숨은 높이 기준(키 큰 것은 숨은 자리가 기준보다 높아 p = 0에서도 pass 2가 켜지던 문제)
+        if (g.visible && cur[o + Y] > hiddenY + 0.05) visible = true;
       }
 
       // 툴팁은 호버한 책의 오른쪽 위에 붙인다 (값이 바뀔 때만 스타일을 쓴다)
@@ -635,12 +823,12 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         // 가장 높이 올라온 책 윗면의 화면 y(px, 위에서부터). innerHeight보다 크면 화면 밖
         let top = Infinity;
         for (let i = 0; i < n; i++) {
-          if (!meshes[i].visible) continue;
+          if (!groups[i].visible) continue;
           const o = i * CH;
           v.set(baseX[i] + cur[o + SHIFT], cur[o + Y] + P.size[1] * height[i] * 0.5 * cur[o + SCALE], cur[o + Z]).project(camera);
           top = Math.min(top, (0.5 - v.y * 0.5) * innerHeight);
         }
-        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${Math.round(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}`);
+        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${Math.round(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}  tex ${Math.round(texMs)}ms up ${Math.round(upMs)}ms ~${Math.round(texMB)}MB calls ${calls} out ${out}`);
       }
       return visible;
     },
@@ -648,8 +836,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       removeOverlay();
       document.documentElement.style.cursor = '';
       if (tip) tip.hidden = true;
-      geometry.dispose();
-      edges.dispose();
+      for (const g of geometries) g.dispose();
       for (const d of disposables) d.dispose();
     },
   };
