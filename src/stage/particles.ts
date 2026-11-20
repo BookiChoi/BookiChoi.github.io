@@ -24,6 +24,8 @@ export interface Blend {
   insight: number;
   /** noiseAmp 배율 */
   noise: number;
+  /** 구간 쌍 번호(섹션 i → i+1). 전환 배율은 S0~S4 쌍에만 건다 */
+  i?: number;
 }
 
 export interface Particles {
@@ -134,6 +136,13 @@ export function createParticles(
   const points = new Points(geometry, material);
   points.frustumCulled = false; // position은 uv라 바운딩 계산이 의미 없다
 
+  // 전환 배율 상태: 마지막으로 모양 쌍이나 mix가 바뀐 뒤 지난 시간
+  let lastA = -1;
+  let lastB = -1;
+  let lastMix = -1;
+  let sinceMorph = Infinity;
+  const lastMorphPair = P.sectionShapes.length - 3; // S3→S4 쌍까지(S4→S5는 폴더 등장이라 그대로)
+
   return {
     points,
     posTexture: () => gpu.getCurrentRenderTarget(pos).texture,
@@ -142,17 +151,31 @@ export function createParticles(
       draw.uScale.value = pxPerUnit;
     },
     step(dt, time, pointer, blend) {
+      // 전환 배율 b: S0~S4 구간에서 모양 쌍이나 mix가 바뀌는 동안과 그 뒤 hold초는 boost, release초에 걸쳐 1로.
+      // 진동수만 b배(spring×b², damping×b: 임계감쇠 유지로 오버슈트 없음), 노이즈·포인터 힘도 ×b²라 흔들림 크기(힘÷스프링)는 같다
+      const changed = lastA >= 0 && (blend.a !== lastA || blend.b !== lastB || Math.abs(blend.mix - lastMix) > 1e-4); // 첫 스텝은 변화가 아니다
+      lastA = blend.a;
+      lastB = blend.b;
+      lastMix = blend.mix;
+      if (changed && (blend.i ?? 0) <= lastMorphPair) sinceMorph = 0;
+      else sinceMorph += dt;
+      const M = P.morph;
+      const f = 1 - Math.min(1, Math.max(0, (sinceMorph - M.hold) / M.release));
+      const b = 1 + (M.boost - 1) * f * f * (3 - 2 * f);
+      const b2 = b * b;
       // 입장 구간은 introDuration 안에 수렴하는 임계감쇠 스프링(ω = 6/T), 끝나면 1초에 걸쳐 평소 값으로
       const w = 6 / P.introDuration;
       const a = Math.min(1, Math.max(0, time - P.introDuration));
-      sim.uSpring.value = w * w + (P.spring - w * w) * a;
-      sim.uDamping.value = 2 * w + (P.damping - 2 * w) * a;
+      sim.uSpring.value = (w * w + (P.spring - w * w) * a) * b2;
+      sim.uDamping.value = (2 * w + (P.damping - 2 * w) * a) * b;
+      sim.uPointerForce.value = P.pointerForce * b2;
+      draw.uColorSpeed.value = P.colorSpeed / b; // 2배 빨리 움직여도 전환 중 파래지는 정도는 같게
       sim.uDt.value = dt;
       sim.uTime.value = time;
       sim.uShapeA.value = blend.a;
       sim.uShapeB.value = blend.b;
       sim.uMix.value = blend.mix;
-      sim.uNoiseAmp.value = P.noiseAmp * blend.noise;
+      sim.uNoiseAmp.value = P.noiseAmp * blend.noise * b2;
       draw.uDim.value = blend.dim;
       draw.uInsight.value = blend.insight;
       sim.uPointer.value.copy(pointer);

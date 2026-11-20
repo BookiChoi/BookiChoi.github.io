@@ -6,6 +6,9 @@ export const PARAMS = {
   spring: 7.5, // origin으로 당기는 힘 (입장이 끝난 뒤의 평소 값). 이전 3 (2.5배)
   damping: 5.5, // 속도 감쇠 (1/s). 임계감쇠 2√spring 근처로 맞춰 오버슈트를 없앤다. 이전 3
   secSmooth: 14, // 스크롤 sec가 목표를 따라가는 빠르기 (1/s). 이전 8
+  // 모양 전환 배율(S0~S4 구간 쌍만): 전환 중에만 점의 진동수를 boost배로(spring×b², damping×b, 노이즈·포인터 힘×b², colorSpeed÷b라 흔들림 크기·색은 그대로).
+  // 마지막 변화 뒤 hold초 유지, release초에 걸쳐 1로. 가만히 있을 때는 1이라 평소 값과 같다
+  morph: { boost: 2, hold: 1.0, release: 0.5 },
   introDuration: 2, // 입장: 흩어진 점이 shape로 모이는 데 걸리는 시간(초)
   noiseAmp: 0.25, // (스프링과 같은 배율로 올려 흔들림 크기 유지, 이전 0.1) curl noise 세기. 섹션별 배율은 sectionNoise
   noiseFreq: 0.9,
