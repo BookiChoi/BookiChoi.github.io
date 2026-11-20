@@ -24,6 +24,7 @@ import {
   type Material,
   type Texture,
   type ToneMapping,
+  type WebGLRenderer,
   type WebGLRenderTarget,
 } from 'three';
 import { arrange, blurRect, cardCanvas, drawCover, isTodo, LAYOUT, panelCanvas, paperMaps, sheetAtlas, shapeShadow, studioEnv, texture, trace, type BookData, type Placement } from './covers';
@@ -108,17 +109,29 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   rim.position.set(4, 2, -5);
   scene.add(key, rim);
 
-  // 측정(debug books 줄, ?debug면 window.__booksPerf): 생성 비용(로드 직후)과 첫 렌더 비용(S5 진입)을 나눠 잰다
+  // 측정(debug books 줄, ?debug면 window.__booksPerf): 로드 직후 생성(덩어리로 나눔), S5 전 미리 데우기, S5 첫 진입
   const perf = {
     gen: { atlas: 0, maps: 0, panels: 0, cards: 0, shadows: 0, env: 0 },
     geo: { panels: 0, sheets: 0, shadows: 0 },
-    build: 0, // createBooks 동기 구간 전체
-    pmrem: -1,
-    compile: -1,
-    programs: -1, // 첫 렌더 compile로 새로 생긴 프로그램 수
-    programsTotal: -1,
-    upload: -1,
-    render: -1, // 미리 한 일 뒤 남은 첫 렌더(지연된 컴파일 대기 포함)
+    build: 0, // 생성 CPU 합계(쉬는 시간 제외)
+    chunkMax: 0, // 가장 긴 덩어리
+    warm: {
+      pmrem: -1, // ms
+      pmremSec: -1, // 끝난 시점의 sec
+      compileSync: -1, // compileAsync의 동기 부분 ms
+      compileProg: 0, // 이때 새로 생긴 프로그램 수
+      compileSec: -1, // 프로그램이 모두 준비된 시점의 sec
+      tex: 0,
+      texMs: 0,
+      texSec: -1,
+      geo: 0,
+      geoMs: 0,
+      geoSec: -1,
+    },
+    fallback: -1, // S5 첫 표시에 남은 단계를 몰아 처리한 ms(-1이면 없음)
+    newProg: -1, // S5 첫 표시부터 30프레임 동안 새로 생긴 프로그램·텍스처·지오메트리(0이어야 한다)
+    newTex: -1,
+    newGeo: -1,
     frames: [] as number[], // S5 첫 표시부터 30프레임의 프레임 간격(ms, raw)
     booksMs: [] as number[], // 같은 프레임들의 책 pass 시간
     worst: 0,
@@ -132,9 +145,24 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     bucket[key] += performance.now() - t;
     return r;
   };
-  const t0 = performance.now();
+  // 생성 나누기: 덩어리 사이에 작업을 양보한다(setTimeout 0: rAF 콜백 안에서 이어 돌면 그 프레임이 늦어진다)
+  let chunkAt = performance.now();
+  const breath = async () => {
+    const d = performance.now() - chunkAt;
+    perf.build += d;
+    perf.chunkMax = Math.max(perf.chunkMax, d);
+    await new Promise((r) => setTimeout(r, 0));
+    chunkAt = performance.now();
+    return opts.signal.aborted;
+  };
   const geometries: BufferGeometry[] = [];
   const disposables: (Material | Texture)[] = [];
+  const bail = () => {
+    for (const g of geometries) g.dispose();
+    for (const d of disposables) d.dispose();
+    return null;
+  };
+  const textures: Texture[] = []; // 미리 업로드할 텍스처(환경 equirect 제외: PMREM 결과만 쓴다)
   let texPixels = 0; // 텍스처 메모리 추정(debug)
   const tex = (canvas: HTMLCanvasElement, o?: Parameters<typeof texture>[1]) => {
     texPixels += canvas.width * canvas.height;
@@ -147,60 +175,134 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   const keep = <M extends Material>(m: M) => (disposables.push(m), m);
   const std = (p: ConstructorParameters<typeof MeshStandardMaterial>[0]) => keep(new MeshStandardMaterial(p));
 
-  // 환경광(코드로 만든 스튜디오 equirect, three가 PMREM으로 변환)과 톤매핑. 렌더러는 점 구름과 같아서 이 scene을 그리는 동안만 바꾼다
+  // 환경광(코드로 만든 스튜디오 equirect → PMREM)과 톤매핑. 렌더러는 점 구름과 같아서 이 scene을 그리는 동안만 바꾼다
   const env = timed(perf.gen, 'env', studioEnv);
   disposables.push(env);
-  texPixels += 512 * 256 * 2; // equirect + PMREM 대략
-  scene.environment = env;
+  texPixels += 256 * 128 * 2; // equirect + PMREM 대략
   scene.environmentIntensity = 1;
   let prevTone: ToneMapping = NeutralToneMapping;
   let prevExposure = 1;
   let beforeAt = 0;
-  let first = true;
   let pmremRT: WebGLRenderTarget | null = null;
-  const textures: Texture[] = []; // 업로드 측정용(환경 equirect 제외)
+
+  // 미리 데우기: S5 첫 렌더에 몰리던 일(PMREM, 셰이더 컴파일, 텍스처 업로드, 폴더별 버퍼·VAO·프로그램 첫 사용)을
+  // S1~S4의 조용한 순간에 프레임마다 하나씩 한다. 렌더러는 책 scene 훅으로만 얻으므로 update()가 그 프레임만 pass 2를 연다
+  // (폴더는 화면 아래에 숨어 있어 그리는 픽셀이 없다). 톤매핑이 켜진 훅 안에서 해야 S5와 같은 프로그램이 된다
+  type Step = 'pmrem' | 'compile' | 'tex' | 'geo';
+  let step: Step | null = null; // 이번 프레임 훅에서 할 단계(update가 정한다)
+  let fallback = false; // S5 첫 표시인데 단계가 남았다: 그 훅에서 몰아서(지금까지의 동작)
+  let fallbackDone = false;
+  let compileStarted = false;
+  let compileOk = false;
+  let warmGroup: Group | null = null; // 이번 프레임에 화면 밖에서 한 번 그리는 폴더
+  let warmGroupVisible = true;
+  let hookSec = 0;
+  let s5Base: [number, number, number] | null = null; // S5 첫 표시 때의 프로그램·텍스처·지오메트리 수
+  const nextStep = (): Step | null => {
+    const w = perf.warm;
+    if (w.pmrem < 0) return 'pmrem';
+    if (!compileStarted) return 'compile';
+    if (w.tex < textures.length) return 'tex';
+    if (compileOk && w.geo < groups.length) return 'geo';
+    return null; // 끝났거나 컴파일 대기 중
+  };
+  const warmDone = () => fallbackDone || (perf.warm.pmrem >= 0 && compileOk && perf.warm.tex >= textures.length && perf.warm.geo >= groups.length);
+  const doPmrem = (r: WebGLRenderer) => {
+    const t = performance.now();
+    const pm = new PMREMGenerator(r);
+    pmremRT = pm.fromEquirectangular(env);
+    pm.dispose();
+    scene.environment = pmremRT.texture;
+    perf.warm.pmrem = performance.now() - t;
+    perf.warm.pmremSec = hookSec;
+  };
+  const doTex = (r: WebGLRenderer) => {
+    const t = performance.now();
+    r.initTexture(textures[perf.warm.tex++]);
+    perf.warm.texMs += performance.now() - t;
+    if (perf.warm.tex >= textures.length) perf.warm.texSec = hookSec;
+  };
+  const counts = (r: WebGLRenderer): [number, number, number] => [r.info.programs?.length ?? 0, r.info.memory.textures, r.info.memory.geometries];
   scene.onBeforeRender = (r) => {
     prevTone = r.toneMapping;
     prevExposure = r.toneMappingExposure;
     r.toneMapping = NeutralToneMapping;
     r.toneMappingExposure = EXPOSURE;
-    if (first) {
-      // 첫 렌더(S5 진입)에 three가 몰아서 하던 일을 같은 프레임 안에서 순서대로 드러내 잰다: PMREM → 컴파일 → 업로드
-      first = false;
-      let t = performance.now();
-      const pm = new PMREMGenerator(r);
-      pmremRT = pm.fromEquirectangular(env);
-      pm.dispose();
-      scene.environment = pmremRT.texture;
-      perf.pmrem = performance.now() - t;
+    if (frameLog === 0 && !s5Base) s5Base = counts(r); // S5 첫 표시 프레임(폴백 전)
+    if (fallback) {
+      // 빨리 내려와 데우기가 덜 끝났다: 남은 일을 이 프레임에 몰아서(컴파일은 동기). 폴더 버퍼는 이번 렌더가 올린다
+      fallback = false;
+      fallbackDone = true;
+      const t = performance.now();
+      if (perf.warm.pmrem < 0) doPmrem(r);
+      if (!compileOk) {
+        r.compile(scene, camera);
+        compileOk = compileStarted = true;
+      }
+      while (perf.warm.tex < textures.length) doTex(r);
+      perf.fallback = performance.now() - t;
+    } else if (step === 'pmrem') doPmrem(r);
+    else if (step === 'compile') {
+      compileStarted = true;
       const p0 = r.info.programs?.length ?? 0;
-      t = performance.now();
-      r.compile(scene, camera);
-      perf.compile = performance.now() - t;
-      perf.programsTotal = r.info.programs?.length ?? 0;
-      perf.programs = perf.programsTotal - p0;
-      t = performance.now();
-      for (const tx of textures) r.initTexture(tx);
-      perf.upload = performance.now() - t;
-      perf.render = -2; // 이번 렌더의 나머지를 onAfterRender에서 채운다
+      const t = performance.now();
+      r.compileAsync(scene, camera)
+        .then(() => {
+          compileOk = true;
+          perf.warm.compileSec = hookSec;
+        })
+        .catch(() => (compileOk = true)); // 실패해도 데우기를 막지 않는다(그리기 때 다시 시도된다)
+      perf.warm.compileSync = performance.now() - t;
+      perf.warm.compileProg = (r.info.programs?.length ?? 0) - p0;
+    } else if (step === 'tex') doTex(r);
+    else if (step === 'geo') {
+      // 숨은 폴더 하나를 컬링 없이 그린다: 화면 밖이라 픽셀은 없고 버퍼 업로드·VAO·프로그램 첫 사용만 끝난다
+      const g = groups[perf.warm.geo++];
+      warmGroup = g;
+      warmGroupVisible = g.visible;
+      g.visible = true;
+      g.traverse((o) => (o.frustumCulled = false));
     }
+    step = null;
     beforeAt = performance.now();
   };
   scene.onAfterRender = (r) => {
     r.toneMapping = prevTone;
     r.toneMappingExposure = prevExposure;
     const ms = performance.now() - beforeAt;
-    if (perf.render === -2) perf.render = ms;
-    if (frameLog >= 0 && perf.booksMs.length < 30) perf.booksMs.push(ms);
+    if (warmGroup) {
+      warmGroup.traverse((o) => (o.frustumCulled = true));
+      warmGroup.visible = warmGroupVisible;
+      warmGroup = null;
+      perf.warm.geoMs += ms;
+      if (perf.warm.geo >= groups.length) perf.warm.geoSec = hookSec;
+    }
+    if (frameLog >= 0 && perf.booksMs.length < 30) {
+      perf.booksMs.push(ms);
+      if (perf.booksMs.length === 30 && s5Base) {
+        const [p, t, g] = counts(r);
+        perf.newProg = p - s5Base[0];
+        perf.newTex = t - s5Base[1];
+        perf.newGeo = g - s5Base[2];
+      }
+    }
     perf.calls = r.info.render.calls;
   };
   let frameLog = -1; // S5 첫 표시 프레임부터 기록(update 사이 간격)
   let lastUpdate = 0;
+  let quietSec = 0; // 스크롤이 멈췄는지: sec가 이 값에서 거의 안 변한 시각부터 잰다
+  let quietAt = 0;
+  let appeared = false; // 폴더가 한 번이라도 올라오기 시작했는지
 
   // 공유 텍스처: 서류 아틀라스, 판 2장, 종이 결 법선·거칠기(반복), 그림자
   const atlas = timed(perf.gen, 'atlas', sheetAtlas);
-  const fiber = timed(perf.gen, 'maps', () => paperMaps('fiber'));
-  const grain = timed(perf.gen, 'maps', () => paperMaps('grain'));
+  if (await breath()) return bail();
+  const cpu = () => perf.build + performance.now() - chunkAt; // 쉬는 시간을 뺀 생성 CPU
+  const c0 = cpu();
+  const fiber = await paperMaps('fiber', 512, breath);
+  const grain = await paperMaps('grain', 512, breath);
+  perf.gen.maps = cpu() - c0;
+  if (await breath()) return bail();
   const atlasUnits = atlas.canvas.width / LAYOUT.sheetU; // 아틀라스 UV 1이 몇 단위인지
   const sheetMat = std({
     map: tex(atlas.canvas),
@@ -213,6 +315,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   const panelMat = (which: 'back' | 'front') => std({ map: tex(timed(perf.gen, 'panels', () => panelCanvas(which))), normalMap: grainN, normalScale: new Vector2(0.3, 0.3), roughnessMap: grainR });
   const backMat = panelMat('back');
   const frontMat = panelMat('front');
+  if (await breath()) return bail();
   const panelEdge = std({ color: '#f1ebe1', roughness: 0.9 });
   const foldMat = std({ color: '#ddd4c5', roughness: 0.85, side: DoubleSide });
   const sheetEdges = LAYOUT.sheets.map((s) => std({ color: s.edge, roughness: 0.9 }));
@@ -224,6 +327,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   const FM = 0.04; // 앞판 그림자 여백(단위)
   const frontShadow = shade(tex(timed(perf.gen, 'shadows', () => shapeShadow(LAYOUT.front, LAYOUT.frontRect, FM, 0.018))), 0.42);
   const proxyMat = keep(new MeshBasicMaterial({ visible: false }));
+  if (await breath()) return bail();
 
   // 판: 윤곽(탭·계단)을 PANEL 두께로 밀어낸다. UV는 판 사각형 기준(앞뒷면 = 그룹 0, 단면 = 그룹 1)
   const panelGeo = (pts: typeof LAYOUT.back, r: typeof LAYOUT.backRect) => {
@@ -386,8 +490,11 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     }
     groups.push(g);
     scene.add(g);
+    if (await breath()) return bail(); // 폴더 하나마다(실제 폴더는 서류 6장 지오메트리)
   }
-  perf.build = performance.now() - t0;
+  const last = performance.now() - chunkAt;
+  perf.build += last;
+  perf.chunkMax = Math.max(perf.chunkMax, last);
   perf.mb = (texPixels * 4 * 4) / 3 / 1048576; // RGBA × mipmap(4/3)
   scene.traverse((o) => {
     if (o instanceof Mesh && o.material !== proxyMat) perf.meshes++;
@@ -750,6 +857,14 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       // 숨은 책(가장 큰 높이, 가운데 z) 윗면이 화면 아래 가장자리보다 0.3 아래에 오게 한다(데스크톱은 P.rise 그대로)
       const bottom = camera.position.y - (d - zCenter) * Math.tan(Math.atan2(camera.position.y - P.y, d) + (P.fov * Math.PI) / 360);
       rise = Math.max(P.rise, P.y + P.size[1] * (1 + P.heightJitter) * 0.5 - bottom + 0.3);
+      // 아직 한 번도 올라오지 않았으면 새 숨김 깊이로 바로 옮긴다. 시작 높이(P.rise)는 세로 화면의 깊은 숨김보다 위라서,
+      // 스프링으로 내려가는 몇 프레임 동안 '보임'으로 판정돼 로드 직후 책 pass(첫 컴파일 포함)가 돌던 문제
+      if (!appeared) {
+        for (let i = 0; i < n; i++) {
+          cur[i * CH + Y] = P.y - rise - (1 - height[i]) * P.size[1] * 0.5;
+          vel[i * CH + Y] = 0;
+        }
+      }
     },
     update(dt, sec) {
       const now = performance.now();
@@ -760,6 +875,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       }
       lastUpdate = now;
       const p = clamp01((sec - P.appear[0]) / (P.appear[1] - P.appear[0]));
+      if (p > 0) appeared = true;
       const wasActive = active;
       active = p > 0.85;
       if (active && !wasActive) lastInput = now; // S5에 도착한 뒤부터 드리프트 대기 시간을 센다
@@ -893,10 +1009,29 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
           v.set(baseX[i] + cur[o + SHIFT], cur[o + Y] + P.size[1] * height[i] * 0.5 * cur[o + SCALE], cur[o + Z]).project(camera);
           top = Math.min(top, (0.5 - v.y * 0.5) * innerHeight);
         }
-        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${Math.round(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}  | gen ${Math.round(perf.build)}ms  first pmrem ${Math.round(perf.pmrem)} compile ${Math.round(perf.compile)} (prog ${perf.programs}) up ${Math.round(perf.upload)} render ${Math.round(perf.render)}ms  f30 max ${Math.round(perf.worst)}ms  meshes ${perf.meshes} calls ${perf.calls} ~${Math.round(perf.mb)}MB out ${out}`);
+        const w = perf.warm;
+        const r = Math.round;
+        const at = (s: number) => (s < 0 ? '-' : `@s${s.toFixed(1)}`);
+        const warmText = `warm pmrem ${r(w.pmrem)}ms${at(w.pmremSec)} compile ${r(w.compileSync)}ms(+${w.compileProg})${compileOk ? `ok${at(w.compileSec)}` : compileStarted ? 'wait' : '-'} tex ${w.tex}/${textures.length} ${r(w.texMs)}ms${at(w.texSec)} geo ${w.geo}/${groups.length} ${r(w.geoMs)}ms${at(w.geoSec)}`;
+        const s5Text = `s5 fallback ${perf.fallback < 0 ? 'none' : `${r(perf.fallback)}ms`} newProg ${perf.newProg} newTex ${perf.newTex} newGeo ${perf.newGeo}`;
+        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${r(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}  | gen ${r(perf.build)}ms (max ${r(perf.chunkMax)}ms)  ${warmText} | ${s5Text}  f30 max ${r(perf.worst)}ms  meshes ${perf.meshes} calls ${perf.calls} ~${r(perf.mb)}MB out ${out}`);
       }
-      if (visible && frameLog < 0) frameLog = 0;
-      return visible;
+      if (visible && p > 0 && frameLog < 0) frameLog = 0; // S5 첫 표시
+      // 미리 데우기: 단계가 남았으면 이번 프레임에 pass 2를 연다(폴더가 숨어 있어 비용이 거의 없다).
+      // S0 연출 중(sec ≤ 0.5)에는 하지 않고, 스크롤이 250ms 멈춘 때나 S5가 가까울 때(sec ≥ 3.6) 한 단계씩.
+      // 폴더가 보이기 시작했는데 남았으면 그 프레임 훅에서 몰아서 처리한다(폴백)
+      hookSec = sec;
+      if (Math.abs(sec - quietSec) > 0.002) {
+        quietSec = sec;
+        quietAt = now;
+      }
+      if (warmDone()) step = null;
+      else if (visible && p > 0) {
+        fallback = true;
+        step = null;
+      } else if ((sec > 0.5 && now - quietAt > 250) || sec >= 3.6) step = nextStep();
+      else step = null;
+      return visible || step !== null;
     },
     dispose() {
       removeOverlay();

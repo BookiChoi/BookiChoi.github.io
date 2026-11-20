@@ -22,9 +22,10 @@ export function texture(canvas: HTMLCanvasElement, opts: { linear?: boolean; rep
 
 /**
  * 반복 가능한 종이 결 높이(주기 격자 값 노이즈, 저주파 + 고주파 + 섬유 점) → 법선 맵과 거칠기 맵.
- * grain이면 가로로 늘인 카드스톡 결. 크기 n은 2의 거듭제곱(반복 + mipmap)
+ * grain이면 가로로 늘인 카드스톡 결. 크기 n은 2의 거듭제곱(반복 + mipmap).
+ * pause: 덩어리(옥타브, 섬유 점, 법선 계산 절반) 사이에 쉬는 함수. 긴 작업 하나를 15~25ms 덩어리로 나눈다(결과는 같다)
  */
-export function paperMaps(kind: 'fiber' | 'grain', n = 512): { normal: HTMLCanvasElement; rough: HTMLCanvasElement } {
+export async function paperMaps(kind: 'fiber' | 'grain', n = 512, pause: () => Promise<unknown> = async () => {}): Promise<{ normal: HTMLCanvasElement; rough: HTMLCanvasElement }> {
   const rand = rng(`maps:${kind}`);
   const H = new Float32Array(n * n);
   const octave = (px: number, py: number, amp: number) => {
@@ -47,13 +48,11 @@ export function paperMaps(kind: 'fiber' | 'grain', n = 512): { normal: HTMLCanva
       }
     }
   };
-  if (kind === 'grain') {
-    octave(8, 64, 0.35);
-    octave(32, 256, 0.45);
-  } else {
-    octave(8, 8, 0.35);
-    octave(64, 64, 0.35);
-  }
+  const [o1, o2] = kind === 'grain' ? [[8, 64, 0.35], [32, 256, 0.45]] : [[8, 8, 0.35], [64, 64, 0.35]];
+  octave(o1[0], o1[1], o1[2]);
+  await pause();
+  octave(o2[0], o2[1], o2[2]);
+  await pause();
   for (let i = 0; i < n * n; i++) H[i] += rand() * (kind === 'grain' ? 0.12 : 0.3); // 섬유 점
   const [normal, nx] = canvas2d(n, n);
   const [rough, rx] = canvas2d(n, n);
@@ -62,6 +61,7 @@ export function paperMaps(kind: 'fiber' | 'grain', n = 512): { normal: HTMLCanva
   const at = (x: number, y: number) => H[((y + n) % n) * n + ((x + n) % n)];
   const k = kind === 'grain' ? 2.2 : 3;
   for (let y = 0; y < n; y++) {
+    if (y === n / 2) await pause();
     for (let x = 0; x < n; x++) {
       const dx = (at(x + 1, y) - at(x - 1, y)) * k;
       const dy = (at(x, y + 1) - at(x, y - 1)) * k;
@@ -93,10 +93,13 @@ export function blurRect(margin = 0.12, n = 256): HTMLCanvasElement {
   return c;
 }
 
-/** 코드로 만든 부드러운 스튜디오 환경광(equirect): 위는 밝고 아래는 어둡게, 앞 왼쪽 위와 오른쪽에 소프트박스. three가 PMREM으로 바꾼다 */
+/**
+ * 코드로 만든 부드러운 스튜디오 환경광(equirect): 위는 밝고 아래는 어둡게, 앞 왼쪽 위와 오른쪽에 소프트박스. books.ts가 PMREM으로 바꾼다.
+ * 256×128: PMREM 큐브가 64가 되어 변환 비용이 줄어든다(판·카드는 거칠어 반사가 흐리므로 512×256과 차이가 작다)
+ */
 export function studioEnv(): CanvasTexture {
-  const w = 512;
-  const h = 256;
+  const w = 256;
+  const h = 128;
   const [c, x] = canvas2d(w, h);
   const g = x.createLinearGradient(0, 0, 0, h);
   g.addColorStop(0, '#d8d4cc');
