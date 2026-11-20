@@ -68,7 +68,34 @@ const TAP_NEAR_PX = 24; // 레이캐스트가 빗나가도 실제 책 화면 사
 
 type Mode = 'rest' | 'drag' | 'inertia' | 'snap' | 'wheel';
 
-export async function createBooks(opts: { mobile: boolean; accent: string; signal: AbortSignal }): Promise<Books | null> {
+const SLOW_MS = 3000; // 페이지 시작부터 이만큼 지나도 폴더가 준비되지 않으면 숨긴 목록을 다시 보인다(books-slow)
+const HOLD_MS = 600; // S5로 바로 열었을 때 데우기를 마치려고 등장을 미루는 최대 시간
+const BUDGET_MS = 8; // 등장을 미루는 동안 한 프레임에 데우기 단계를 처리하는 시간
+
+type Opts = { mobile: boolean; accent: string; signal: AbortSignal };
+/**
+ * 폴백 목록(.project-list)은 JS가 켜지고 동작이 허용되면 처음부터 시각적으로만 숨는다(stage.css). 여기서는 안전망만 맡는다:
+ * 폴더 생성이 실패하면 html.books-fail(목록이 다시 보인다), 페이지 시작 3초 안에 준비되지 않으면 html.books-slow(준비되면 뗀다).
+ * WebGL 실패·문맥 손실은 index.ts의 no-webgl이 맡는다
+ */
+export async function createBooks(opts: Opts): Promise<Books | null> {
+  const root = document.documentElement;
+  // 3초는 페이지 시작 기준. 생성이 그보다 늦게 시작해도 최소 0.5초는 기다린다(곧 준비될 때 목록이 한 번 깜빡이지 않게)
+  const slow = window.setTimeout(() => root.classList.add('books-slow'), Math.max(500, SLOW_MS - performance.now()));
+  try {
+    const books = await build(opts);
+    if (!books && !opts.signal.aborted) root.classList.add('books-fail');
+    return books;
+  } catch (e) {
+    root.classList.add('books-fail');
+    throw e;
+  } finally {
+    clearTimeout(slow);
+    root.classList.remove('books-slow'); // 성공이면 같은 마이크로태스크 흐름에서 index.ts가 books-on을 붙인다
+  }
+}
+
+async function build(opts: Opts): Promise<Books | null> {
   const P = PARAMS.books;
   const dataEl = document.getElementById('books-data');
   const tip = document.getElementById('book-tip');
@@ -129,6 +156,8 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
       geoSec: -1,
     },
     fallback: -1, // S5 첫 표시에 남은 단계를 몰아 처리한 ms(-1이면 없음)
+    hold: -1, // 바로 열기: 데우기를 마치려고 등장을 미룬 ms(-1이면 미루지 않음)
+    urgent: false, // 생성 때 S5가 이미 화면에 있었다(양보 없이 생성)
     newProg: -1, // S5 첫 표시부터 30프레임 동안 새로 생긴 프로그램·텍스처·지오메트리(0이어야 한다)
     newTex: -1,
     newGeo: -1,
@@ -145,12 +174,20 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     bucket[key] += performance.now() - t;
     return r;
   };
-  // 생성 나누기: 덩어리 사이에 작업을 양보한다(setTimeout 0: rAF 콜백 안에서 이어 돌면 그 프레임이 늦어진다)
+  // 생성 나누기: 덩어리 사이에 작업을 양보한다(setTimeout 0: rAF 콜백 안에서 이어 돌면 그 프레임이 늦어진다).
+  // 직전 양보 뒤 8ms가 안 됐으면 쉬지 않고, 시작 때 S5가 이미 화면에 있으면(바로 열기) 쉬지 않고 서둘러 만든다
+  const r5 = section?.getBoundingClientRect();
+  const urgent = (!!r5 && r5.top < innerHeight && r5.bottom > 0) || location.hash === '#projects' || location.hash === '#s5'; // 앵커 스크롤은 늦게 올 수 있다
   let chunkAt = performance.now();
+  let chunkCpu = 0;
   const breath = async () => {
     const d = performance.now() - chunkAt;
     perf.build += d;
-    perf.chunkMax = Math.max(perf.chunkMax, d);
+    chunkCpu += d;
+    chunkAt = performance.now();
+    if (urgent || chunkCpu < 8) return opts.signal.aborted;
+    perf.chunkMax = Math.max(perf.chunkMax, chunkCpu);
+    chunkCpu = 0;
     await new Promise((r) => setTimeout(r, 0));
     chunkAt = performance.now();
     return opts.signal.aborted;
@@ -194,8 +231,10 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   let fallbackDone = false;
   let compileStarted = false;
   let compileOk = false;
-  let warmGroup: Group | null = null; // 이번 프레임에 화면 밖에서 한 번 그리는 폴더
-  let warmGroupVisible = true;
+  const warmGroups: [Group, boolean][] = []; // 이번 프레임에 화면 밖에서 한 번 그리는 폴더와 원래 visible
+  let updates = 0;
+  let holding = false; // 바로 열기: 데우기를 마칠 때까지 등장을 미루는 중
+  let holdAt = 0;
   let hookSec = 0;
   let s5Base: [number, number, number] | null = null; // S5 첫 표시 때의 프로그램·텍스처·지오메트리 수
   const nextStep = (): Step | null => {
@@ -203,7 +242,7 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     if (w.pmrem < 0) return 'pmrem';
     if (!compileStarted) return 'compile';
     if (w.tex < textures.length) return 'tex';
-    if (compileOk && w.geo < groups.length) return 'geo';
+    if ((compileOk || holding) && w.geo < groups.length) return 'geo'; // 미루는 중에는 링크 대기가 생겨도 폴더가 숨어 있다
     return null; // 끝났거나 컴파일 대기 중
   };
   const warmDone = () => fallbackDone || (perf.warm.pmrem >= 0 && compileOk && perf.warm.tex >= textures.length && perf.warm.geo >= groups.length);
@@ -254,14 +293,19 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         .catch(() => (compileOk = true)); // 실패해도 데우기를 막지 않는다(그리기 때 다시 시도된다)
       perf.warm.compileSync = performance.now() - t;
       perf.warm.compileProg = (r.info.programs?.length ?? 0) - p0;
-    } else if (step === 'tex') doTex(r);
-    else if (step === 'geo') {
-      // 숨은 폴더 하나를 컬링 없이 그린다: 화면 밖이라 픽셀은 없고 버퍼 업로드·VAO·프로그램 첫 사용만 끝난다
-      const g = groups[perf.warm.geo++];
-      warmGroup = g;
-      warmGroupVisible = g.visible;
-      g.visible = true;
-      g.traverse((o) => (o.frustumCulled = false));
+    } else if (step === 'tex') {
+      // 등장을 미루는 중이면 예산 안에서 여러 장
+      const t = performance.now();
+      do doTex(r);
+      while (holding && perf.warm.tex < textures.length && performance.now() - t < BUDGET_MS);
+    } else if (step === 'geo') {
+      // 숨은 폴더를 컬링 없이 그린다: 화면 밖이라 픽셀은 없고 버퍼 업로드·VAO·프로그램 첫 사용만 끝난다(미루는 중이면 3개씩)
+      for (let k = holding ? 3 : 1; k > 0 && perf.warm.geo < groups.length; k--) {
+        const g = groups[perf.warm.geo++];
+        warmGroups.push([g, g.visible]);
+        g.visible = true;
+        g.traverse((o) => (o.frustumCulled = false));
+      }
     }
     step = null;
     beforeAt = performance.now();
@@ -270,10 +314,12 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
     r.toneMapping = prevTone;
     r.toneMappingExposure = prevExposure;
     const ms = performance.now() - beforeAt;
-    if (warmGroup) {
-      warmGroup.traverse((o) => (o.frustumCulled = true));
-      warmGroup.visible = warmGroupVisible;
-      warmGroup = null;
+    if (warmGroups.length) {
+      for (const [g, vis] of warmGroups) {
+        g.traverse((o) => (o.frustumCulled = true));
+        g.visible = vis;
+      }
+      warmGroups.length = 0;
       perf.warm.geoMs += ms;
       if (perf.warm.geo >= groups.length) perf.warm.geoSec = hookSec;
     }
@@ -494,7 +540,8 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
   }
   const last = performance.now() - chunkAt;
   perf.build += last;
-  perf.chunkMax = Math.max(perf.chunkMax, last);
+  perf.chunkMax = Math.max(perf.chunkMax, chunkCpu + last);
+  perf.urgent = urgent;
   perf.mb = (texPixels * 4 * 4) / 3 / 1048576; // RGBA × mipmap(4/3)
   scene.traverse((o) => {
     if (o instanceof Mesh && o.material !== proxyMat) perf.meshes++;
@@ -874,8 +921,20 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         perf.worst = Math.max(perf.worst, now - lastUpdate);
       }
       lastUpdate = now;
-      const p = clamp01((sec - P.appear[0]) / (P.appear[1] - P.appear[0]));
-      if (p > 0) appeared = true;
+      let p = clamp01((sec - P.appear[0]) / (P.appear[1] - P.appear[0]));
+      // 바로 열기(데우기 전에 S5 도착): 숨은 채로 남은 데우기를 예산 안에서 빠르게 끝낸 뒤 올라온다. HOLD_MS를 넘으면 지금처럼 폴백
+      holding = false;
+      if (!appeared && p > 0 && !warmDone()) {
+        if (!holdAt) holdAt = now;
+        if (now - holdAt < HOLD_MS) {
+          holding = true;
+          p = 0;
+        }
+      }
+      if (p > 0 && !appeared) {
+        appeared = true;
+        if (holdAt) perf.hold = now - holdAt;
+      }
       const wasActive = active;
       active = p > 0.85;
       if (active && !wasActive) lastInput = now; // S5에 도착한 뒤부터 드리프트 대기 시간을 센다
@@ -1013,23 +1072,24 @@ export async function createBooks(opts: { mobile: boolean; accent: string; signa
         const r = Math.round;
         const at = (s: number) => (s < 0 ? '-' : `@s${s.toFixed(1)}`);
         const warmText = `warm pmrem ${r(w.pmrem)}ms${at(w.pmremSec)} compile ${r(w.compileSync)}ms(+${w.compileProg})${compileOk ? `ok${at(w.compileSec)}` : compileStarted ? 'wait' : '-'} tex ${w.tex}/${textures.length} ${r(w.texMs)}ms${at(w.texSec)} geo ${w.geo}/${groups.length} ${r(w.geoMs)}ms${at(w.geoSec)}`;
-        const s5Text = `s5 fallback ${perf.fallback < 0 ? 'none' : `${r(perf.fallback)}ms`} newProg ${perf.newProg} newTex ${perf.newTex} newGeo ${perf.newGeo}`;
-        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${r(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}  | gen ${r(perf.build)}ms (max ${r(perf.chunkMax)}ms)  ${warmText} | ${s5Text}  f30 max ${r(perf.worst)}ms  meshes ${perf.meshes} calls ${perf.calls} ~${r(perf.mb)}MB out ${out}`);
+        const s5Text = `s5 hold ${perf.hold < 0 ? 'none' : `${r(perf.hold)}ms`} fallback ${perf.fallback < 0 ? 'none' : `${r(perf.fallback)}ms`} newProg ${perf.newProg} newTex ${perf.newTex} newGeo ${perf.newGeo}`;
+        debugLine('books', `books ${n} (real ${real.length})  p ${p.toFixed(2)}  draw ${visible ? 'on' : 'off'}  touch ${touchState}  top ${r(top)}/${innerHeight}  ${mode}  offset ${offset.toFixed(2)}  hover ${lit}${picked >= 0 ? `  picked ${picked}` : ''}  | gen ${r(perf.build)}ms (max ${r(perf.chunkMax)}ms${perf.urgent ? ' urgent' : ''})  ${warmText} | ${s5Text}  f30 max ${r(perf.worst)}ms  meshes ${perf.meshes} calls ${perf.calls} ~${r(perf.mb)}MB out ${out}`);
       }
       if (visible && p > 0 && frameLog < 0) frameLog = 0; // S5 첫 표시
       // 미리 데우기: 단계가 남았으면 이번 프레임에 pass 2를 연다(폴더가 숨어 있어 비용이 거의 없다).
       // S0 연출 중(sec ≤ 0.5)에는 하지 않고, 스크롤이 250ms 멈춘 때나 S5가 가까울 때(sec ≥ 3.6) 한 단계씩.
       // 폴더가 보이기 시작했는데 남았으면 그 프레임 훅에서 몰아서 처리한다(폴백)
       hookSec = sec;
+      updates++;
       if (Math.abs(sec - quietSec) > 0.002) {
         quietSec = sec;
         quietAt = now;
       }
-      if (warmDone()) step = null;
+      if (warmDone() || updates < 3) step = null; // 스테이지 첫 프레임(캔버스 표시)에는 얹지 않는다
       else if (visible && p > 0) {
         fallback = true;
         step = null;
-      } else if ((sec > 0.5 && now - quietAt > 250) || sec >= 3.6) step = nextStep();
+      } else if (holding || (sec > 0.5 && now - quietAt > 250) || sec >= 3.6) step = nextStep();
       else step = null;
       return visible || step !== null;
     },

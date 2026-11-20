@@ -99,8 +99,9 @@ main.stage-main {
 #s5 { position: relative; padding: calc(var(--header-h) + 4rem) 1.5rem 6rem; }
 #projects { max-width: 1100px; margin: 0 auto; text-shadow: 0 0 2px var(--bg), 0 0 14px var(--bg); }
 
-/* --- 3D 책 (S5): 책은 고정 캔버스에 그려진다. 준비되면(html.books-on) 링크 목록은 시각적으로만 숨기고 포커스는 가능하게 둔다 --- */
-.books-on .project-list { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* --- 3D 책 (S5): 책은 고정 캔버스에 그려진다. 링크 목록은 JS가 켜지고 동작이 허용되면 처음부터 시각적으로만 숨기고(포커스 가능),
+   WebGL 실패(no-webgl)·폴더 생성 실패(books-fail)·3초 안에 준비 안 됨(books-slow, 준비되면 뗌)이면 다시 보인다 --- */
+@media (prefers-reduced-motion: no-preference) { .js-sections:not(.no-webgl):not(.books-fail):not(.books-slow) .project-list { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } }
 /* 캐러셀: 가로 스와이프는 책이, 세로 스와이프는 스냅 스크롤이 받는다 */
 .books-on #s5 { touch-action: pan-y; user-select: none; }
 @media (pointer: coarse) { .books-on #s5 { cursor: pointer; } } /* iOS Safari가 탭 대상을 클릭 가능한 요소로 보게 하는 보조 장치(판정은 pointerup) */
